@@ -1,10 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { fetchProducts, fetchSettings, type ProductStatus } from './api';
 import ProductCard from './components/ProductCard';
+import AdminLayout from './components/AdminLayout';
 
 const REFRESH_INTERVAL = 60_000; // Auto-refresh every 60 seconds
 
-export default function App() {
+function useHash() {
+  const [hash, setHash] = useState(location.hash);
+  useEffect(() => {
+    const onHashChange = () => setHash(location.hash);
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+  return hash;
+}
+
+function Dashboard() {
   const [products, setProducts] = useState<ProductStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [mockMode, setMockMode] = useState(false);
@@ -76,11 +87,22 @@ export default function App() {
               )}
             </p>
           </div>
-          {lastUpdate && (
-            <span style={{ color: '#64748b', fontSize: '12px' }}>
-              Aktualisiert: {lastUpdate.toLocaleTimeString('de-DE')}
-            </span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <a
+              href="#/admin"
+              style={{
+                padding: '6px 14px', borderRadius: '6px', border: '1px solid #334155',
+                color: '#94a3b8', textDecoration: 'none', fontSize: '13px', fontWeight: 500,
+              }}
+            >
+              Admin
+            </a>
+            {lastUpdate && (
+              <span style={{ color: '#64748b', fontSize: '12px' }}>
+                Aktualisiert: {lastUpdate.toLocaleTimeString('de-DE')}
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
@@ -102,7 +124,7 @@ export default function App() {
       ) : (
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))',
           gap: '16px',
         }}>
           {products.map(product => (
@@ -112,4 +134,11 @@ export default function App() {
       )}
     </div>
   );
+}
+
+export default function App() {
+  const hash = useHash();
+  const isAdmin = hash.startsWith('#/admin');
+
+  return isAdmin ? <AdminLayout /> : <Dashboard />;
 }

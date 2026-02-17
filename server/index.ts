@@ -7,6 +7,7 @@ import { getDb } from './db';
 import productsRouter from './routes/products';
 import checksRouter from './routes/checks';
 import settingsRouter from './routes/settings';
+import adminRouter from './routes/admin';
 import { fetchAllLatestVersions } from './services/version-fetcher';
 import { getCustomers } from './services/ninjaone';
 import { compareVersions } from './services/comparator';
@@ -21,6 +22,7 @@ app.use(express.json());
 app.use('/api', productsRouter);
 app.use('/api', checksRouter);
 app.use('/api', settingsRouter);
+app.use('/api', adminRouter);
 
 // Serve React frontend in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
