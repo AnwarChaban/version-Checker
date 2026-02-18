@@ -21,6 +21,15 @@ interface SoftwareEntry {
   currentVersion: string;
 }
 
+const PRODUCT_VERSION_FIELD_MAP: Record<string, string[]> = {
+  'teamviewer': ['teamViewerVersion', 'teamviewerVersion', 'tvVersion'],
+  'synology-dsm': ['NASversion', 'nasVersion', 'synologyVersion', 'dsmVersion'],
+  'sophos-firewall': ['sophosVersion', 'sophosFirewallVersion'],
+  'unifi-network': ['unifiVersion', 'unifiNetworkVersion'],
+  'proxmox-ve': ['proxmoxVeVersion', 'proxmoxVersion'],
+  'proxmox-backup': ['proxmoxBackupVersion', 'pbsVersion'],
+};
+
 function normalizeCustomFieldValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value.trim();
@@ -61,8 +70,7 @@ function splitValueList(value: string): string[] {
     .filter(Boolean);
 }
 
-function toCustomFieldMap(device: any): Record<string, string> {
-  const customFields = device?.customFields;
+function toCustomFieldMap(customFields: any): Record<string, string> {
   const result: Record<string, string> = {};
 
   if (customFields && typeof customFields === 'object' && !Array.isArray(customFields)) {
@@ -84,7 +92,37 @@ function toCustomFieldMap(device: any): Record<string, string> {
   return result;
 }
 
-function extractSoftwareEntries(device: any): SoftwareEntry[] {
+function getFieldValue(fieldMap: Record<string, string>, aliases: string[]): string {
+  for (const alias of aliases) {
+    const value = fieldMap[alias.toLowerCase()];
+    if (value) return value;
+  }
+  return '';
+}
+
+async function fetchDeviceCustomFieldMap(apiUrl: string, deviceId: number, token: string): Promise<Record<string, string>> {
+  const endpoints = [
+    `${apiUrl}/device/${deviceId}/custom-fields`,
+  ];
+
+  for (const endpoint of endpoints) {
+    const res = await fetch(endpoint, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!res.ok) continue;
+
+    const payload = await res.json() as any;
+    return toCustomFieldMap(payload?.results ?? payload?.customFields ?? payload);
+  }
+
+  return {};
+}
+
+function extractSoftwareEntries(device: any, fieldMap: Record<string, string>): SoftwareEntry[] {
   const entries: SoftwareEntry[] = [];
   const seen = new Set<string>();
 
@@ -102,7 +140,11 @@ function extractSoftwareEntries(device: any): SoftwareEntry[] {
   const directVersion = getCustomField(device, ['currentVersion', 'current_version', 'version', 'CurrentVersion']);
   pushEntry(directProduct, directVersion);
 
-  const fieldMap = toCustomFieldMap(device);
+  for (const [product, aliases] of Object.entries(PRODUCT_VERSION_FIELD_MAP)) {
+    const version = getFieldValue(fieldMap, aliases);
+    pushEntry(product, version);
+  }
+
   const productsValue = fieldMap['products'] || fieldMap['software'] || fieldMap['installedsoftware'];
   const versionsValue = fieldMap['versions'] || fieldMap['softwareversions'] || fieldMap['installedsoftwareversions'];
   if (productsValue && versionsValue) {
@@ -142,7 +184,6 @@ function getDevicesFromApiPayload(payload: any): any[] {
 
 async function fetchOrganizationDevices(apiUrl: string, orgId: number, token: string): Promise<any[]> {
   const endpoints = [
-    `${apiUrl}/organization/${orgId}/devices`,
     `${apiUrl}/organization/${orgId}/devices`,
   ];
 
@@ -266,31 +307,40 @@ async function fetchFromNinjaOne(): Promise<Customer[]> {
   for (const org of orgs) {
     const devices = await fetchOrganizationDevices(apiUrl, org.id, token);
     console.log(`[NinjaOne] Fetching devices for organization ${org.id} from NinjaOne API...`);
-    const mappedDevices: Device[] = devices.flatMap((d: any) => {
+    const mappedDevices: Device[] = [];
+
+    for (const d of devices) {
       const rawId = Number(d.id);
-      if (!Number.isFinite(rawId) || rawId <= 0) return [];
+      if (!Number.isFinite(rawId) || rawId <= 0) continue;
+
+      const customFieldMap = {
+        ...toCustomFieldMap(d?.customFields),
+        ...(await fetchDeviceCustomFieldMap(apiUrl, rawId, token)),
+      };
+
       const name = d.systemName || d.dnsName || `Device-${d.id}`;
-      const softwareEntries = extractSoftwareEntries(d);
+      const softwareEntries = extractSoftwareEntries(d, customFieldMap);
       if (softwareEntries.length === 0) {
-        return [{
+        mappedDevices.push({
           id: rawId * 100 + 1,
           name,
           product: 'unknown',
           currentVersion: 'unknown',
           orgId: Number(org.id),
           ninjaDeviceId: rawId,
-        }];
+        });
+        continue;
       }
 
-      return softwareEntries.map((entry, index) => ({
+      mappedDevices.push(...softwareEntries.map((entry, index) => ({
         id: rawId * 100 + index + 1,
         name,
         product: entry.product,
         currentVersion: entry.currentVersion,
         orgId: Number(org.id),
         ninjaDeviceId: rawId,
-      }));
-    });
+      })));
+    }
 
     customers.push({
       id: org.id,
