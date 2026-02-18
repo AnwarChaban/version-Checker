@@ -43,7 +43,7 @@ router.get('/products', async (_req, res) => {
 
       const productCustomers = customers
         .map(customer => {
-          const devices = customer.devices
+          const devices = (customer.devices || [])
             .filter(d => d.product === product)
             .map(d => {
               const comparison = latestVersion

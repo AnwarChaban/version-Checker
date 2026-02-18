@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { getDb } from '../db';
 import { productNames } from '../services/version-fetcher';
+import { config } from '../config';
+import { syncNinjaOneData } from '../services/ninjaone';
 
 const router = Router();
 
@@ -104,6 +106,8 @@ router.get('/admin/customers', (_req, res) => {
         name: d.name,
         product: d.product,
         currentVersion: d.current_version,
+        orgId: d.org_id ?? undefined,
+        ninjaDeviceId: d.ninja_device_id ?? undefined,
       })),
     };
   });
@@ -140,16 +144,16 @@ router.delete('/admin/customers/:id', (req, res) => {
 router.post('/admin/customers/:id/devices', (req, res) => {
   const db = getDb();
   const customerId = req.params.id;
-  const { name, product, currentVersion } = req.body as {
-    name: string; product: string; currentVersion: string;
+  const { name, product, currentVersion, orgId, ninjaDeviceId } = req.body as {
+    name: string; product: string; currentVersion: string; orgId?: number; ninjaDeviceId?: number;
   };
   if (!name || !product || !currentVersion) {
     res.status(400).json({ error: 'name, product, and currentVersion are required' });
     return;
   }
   const result = db.prepare(
-    'INSERT INTO mock_devices (customer_id, name, product, current_version) VALUES (?, ?, ?, ?)'
-  ).run(customerId, name, product, currentVersion);
+    'INSERT INTO mock_devices (customer_id, name, product, current_version, org_id, ninja_device_id) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(customerId, name, product, currentVersion, orgId ?? null, ninjaDeviceId ?? null);
   res.json({ ok: true, id: result.lastInsertRowid });
 });
 
@@ -178,6 +182,20 @@ router.delete('/admin/devices/:id', (req, res) => {
   const db = getDb();
   db.prepare('DELETE FROM mock_devices WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+router.post('/admin/ninjaone/sync', async (_req, res) => {
+  if (!config.useNinjaOne) {
+    res.status(400).json({ error: 'NinjaOne is not configured' });
+    return;
+  }
+
+  try {
+    const result = await syncNinjaOneData();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
 });
 
 export default router;

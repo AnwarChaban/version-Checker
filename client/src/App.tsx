@@ -38,7 +38,7 @@ function Dashboard() {
   async function loadSettings() {
     try {
       const settings = await fetchSettings();
-      setMockMode(settings.mockMode === 'true');
+      setMockMode(settings.mockMode === 'false');
     } catch {
       // ignore
     }

@@ -63,9 +63,26 @@ function initDb() {
       name TEXT NOT NULL,
       product TEXT NOT NULL,
       current_version TEXT NOT NULL,
+      org_id INTEGER,
+      ninja_device_id INTEGER,
       FOREIGN KEY (customer_id) REFERENCES mock_customers(id) ON DELETE CASCADE
     );
   `);
+
+  ensureMockDeviceColumns();
+}
+
+function ensureMockDeviceColumns() {
+  const columns = db.prepare('PRAGMA table_info(mock_devices)').all() as Array<{ name: string }>;
+  const existing = new Set(columns.map(c => c.name));
+
+  if (!existing.has('org_id')) {
+    db.exec('ALTER TABLE mock_devices ADD COLUMN org_id INTEGER');
+  }
+
+  if (!existing.has('ninja_device_id')) {
+    db.exec('ALTER TABLE mock_devices ADD COLUMN ninja_device_id INTEGER');
+  }
 }
 
 function seedMockData() {

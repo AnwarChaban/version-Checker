@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   fetchCustomers, createCustomer, updateCustomer, deleteCustomer,
   createDevice, updateDevice, deleteDevice,
-  fetchScraperProducts, fetchCustomProducts,
+  fetchScraperProducts, fetchCustomProducts, triggerNinjaSync,
   type MockCustomer, type MockDevice, type ScraperProduct, type CustomProduct,
 } from '../../api';
 
@@ -17,20 +17,105 @@ const btnStyle: React.CSSProperties = {
 const primaryBtn: React.CSSProperties = { ...btnStyle, backgroundColor: '#3b82f6', color: '#fff' };
 const dangerBtn: React.CSSProperties = { ...btnStyle, backgroundColor: '#7f1d1d', color: '#fca5a5' };
 const ghostBtn: React.CSSProperties = { ...btnStyle, backgroundColor: 'transparent', color: '#94a3b8', border: '1px solid #334155' };
+const deviceTableStyle: React.CSSProperties = { width: '100%', borderCollapse: 'collapse', marginBottom: '12px', tableLayout: 'fixed' };
+const truncateCellStyle: React.CSSProperties = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+
+interface GroupedDevice {
+  key: string;
+  name: string;
+  orgId?: number;
+  ninjaDeviceId?: number;
+  entries: MockDevice[];
+}
+
+function isUnknownEntry(device: MockDevice): boolean {
+  return device.product.toLowerCase() === 'unknown' && device.currentVersion.toLowerCase() === 'unknown';
+}
+
+function groupDevices(devices: MockDevice[]): GroupedDevice[] {
+  const map = new Map<string, GroupedDevice>();
+
+  for (const device of devices) {
+    const key = device.ninjaDeviceId
+      ? `ninja:${device.orgId ?? 0}:${device.ninjaDeviceId}`
+      : `name:${device.name.toLowerCase()}`;
+
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        name: device.name,
+        orgId: device.orgId,
+        ninjaDeviceId: device.ninjaDeviceId,
+        entries: [],
+      });
+    }
+
+    map.get(key)!.entries.push(device);
+  }
+
+  return [...map.values()]
+    .map(group => {
+      const hasKnownEntries = group.entries.some(entry => !isUnknownEntry(entry));
+      const normalizedEntries = hasKnownEntries
+        ? group.entries.filter(entry => !isUnknownEntry(entry))
+        : group.entries;
+
+      return {
+        ...group,
+        entries: [...normalizedEntries].sort((a, b) => a.product.localeCompare(b.product)),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<MockCustomer[]>([]);
   const [products, setProducts] = useState<string[]>([]);
   const [newName, setNewName] = useState('');
   const [editingCustomer, setEditingCustomer] = useState<{ id: number; name: string } | null>(null);
+  const [expandedCustomers, setExpandedCustomers] = useState<Record<number, boolean>>({});
   const [addingDevice, setAddingDevice] = useState<number | null>(null);
-  const [deviceForm, setDeviceForm] = useState({ name: '', product: '', currentVersion: '' });
+  const [deviceForm, setDeviceForm] = useState<{ name: string; versions: Record<string, string> }>({ name: '', versions: {} });
   const [editingDevice, setEditingDevice] = useState<(MockDevice & { customerId: number }) | null>(null);
+  const [expandedDevices, setExpandedDevices] = useState<Record<string, boolean>>({});
+  const [isSyncingNinja, setIsSyncingNinja] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [addingProductForDevice, setAddingProductForDevice] = useState<{
+    customerId: number;
+    groupKey: string;
+    deviceName: string;
+    orgId?: number;
+    ninjaDeviceId?: number;
+    product: string;
+    currentVersion: string;
+  } | null>(null);
 
   async function load() {
     const [c, sp, cp] = await Promise.all([fetchCustomers(), fetchScraperProducts(), fetchCustomProducts()]);
     setCustomers(c);
     setProducts([...sp.map(p => p.product), ...cp.map(p => p.id)]);
+  }
+
+  function toggleExpandedDevice(key: string) {
+    setExpandedDevices(prev => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function toggleExpandedCustomer(customerId: number) {
+    setExpandedCustomers(prev => ({ ...prev, [customerId]: !prev[customerId] }));
+  }
+
+  async function handleNinjaSync() {
+    setIsSyncingNinja(true);
+    setSyncMessage(null);
+    try {
+      const result = await triggerNinjaSync();
+      setSyncMessage(`Synchronisiert: ${result.customers} Kunden, ${result.devices} Produkt-Einträge`);
+      await load();
+    } catch (error) {
+      setSyncMessage((error as Error).message || 'NinjaOne-Sync fehlgeschlagen');
+    } finally {
+      setIsSyncingNinja(false);
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -56,11 +141,46 @@ export default function CustomersPage() {
   }
 
   async function handleCreateDevice(customerId: number) {
-    if (!deviceForm.name || !deviceForm.product || !deviceForm.currentVersion) return;
-    await createDevice(customerId, deviceForm);
+    const selectedEntries = Object.entries(deviceForm.versions)
+      .map(([product, currentVersion]) => ({ product, currentVersion: currentVersion.trim() }))
+      .filter(entry => !!entry.currentVersion);
+
+    if (!deviceForm.name.trim() || selectedEntries.length === 0) return;
+
+    await Promise.all(
+      selectedEntries.map(entry =>
+        createDevice(customerId, {
+          name: deviceForm.name.trim(),
+          product: entry.product,
+          currentVersion: entry.currentVersion,
+        })
+      )
+    );
+
     setAddingDevice(null);
-    setDeviceForm({ name: '', product: '', currentVersion: '' });
+    setDeviceForm({ name: '', versions: {} });
     load();
+  }
+
+  function toggleDeviceProduct(product: string) {
+    setDeviceForm(prev => {
+      if (prev.versions[product] !== undefined) {
+        const nextVersions = { ...prev.versions };
+        delete nextVersions[product];
+        return { ...prev, versions: nextVersions };
+      }
+      return { ...prev, versions: { ...prev.versions, [product]: '' } };
+    });
+  }
+
+  function setDeviceProductVersion(product: string, version: string) {
+    setDeviceForm(prev => ({
+      ...prev,
+      versions: {
+        ...prev.versions,
+        [product]: version,
+      },
+    }));
   }
 
   async function handleUpdateDevice() {
@@ -80,9 +200,33 @@ export default function CustomersPage() {
     load();
   }
 
+  async function handleCreateAdditionalProduct() {
+    if (!addingProductForDevice) return;
+    if (!addingProductForDevice.product || !addingProductForDevice.currentVersion.trim()) return;
+
+    await createDevice(addingProductForDevice.customerId, {
+      name: addingProductForDevice.deviceName,
+      product: addingProductForDevice.product,
+      currentVersion: addingProductForDevice.currentVersion.trim(),
+      orgId: addingProductForDevice.orgId,
+      ninjaDeviceId: addingProductForDevice.ninjaDeviceId,
+    });
+
+    setAddingProductForDevice(null);
+    load();
+  }
+
   return (
     <div>
-      <h2 style={{ color: '#f1f5f9', fontSize: '22px', fontWeight: 700, marginBottom: '24px' }}>Kunden & Geräte</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '12px', flexWrap: 'wrap' }}>
+        <h2 style={{ color: '#f1f5f9', fontSize: '22px', fontWeight: 700, margin: 0 }}>Kunden & Geräte</h2>
+        <button style={primaryBtn} onClick={handleNinjaSync} disabled={isSyncingNinja}>
+          {isSyncingNinja ? 'NinjaOne Sync läuft...' : 'NinjaOne jetzt synchronisieren'}
+        </button>
+      </div>
+      {syncMessage && (
+        <div style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '12px' }}>{syncMessage}</div>
+      )}
 
       {/* Add Customer */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
@@ -97,10 +241,14 @@ export default function CustomersPage() {
       </div>
 
       {/* Customer List */}
-      {customers.map(customer => (
-        <div key={customer.id} style={{
-          backgroundColor: '#1e293b', borderRadius: '10px', padding: '20px', marginBottom: '16px',
-        }}>
+      {customers.map(customer => {
+        const groupedDevices = groupDevices(customer.devices);
+        const isCustomerExpanded = !!expandedCustomers[customer.id] || editingCustomer?.id === customer.id;
+
+        return (
+          <div key={customer.id} style={{
+            backgroundColor: '#1e293b', borderRadius: '10px', padding: '20px', marginBottom: '16px',
+          }}>
           {/* Customer Header */}
           {editingCustomer?.id === customer.id ? (
             <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -114,14 +262,25 @@ export default function CustomersPage() {
               <button style={ghostBtn} onClick={() => setEditingCustomer(null)}>Abbrechen</button>
             </div>
           ) : (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ color: '#f1f5f9', fontSize: '16px', fontWeight: 600, margin: 0 }}>
-                {customer.name}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: isCustomerExpanded ? '12px' : 0,
+                cursor: 'pointer',
+                padding: '2px 0',
+              }}
+              onClick={() => toggleExpandedCustomer(customer.id)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f1f5f9', fontSize: '16px', fontWeight: 600 }}>
+                <span style={{ color: '#94a3b8', fontSize: '13px' }}>{isCustomerExpanded ? '▾' : '▸'}</span>
+                <span>{customer.name}</span>
                 <span style={{ color: '#64748b', fontSize: '13px', fontWeight: 400, marginLeft: '8px' }}>
-                  ({customer.devices.length} Geräte)
+                  ({groupedDevices.length} Geräte)
                 </span>
-              </h3>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }} onClick={e => e.stopPropagation()}>
                 <button style={ghostBtn} onClick={() => setEditingCustomer({ id: customer.id, name: customer.name })}>Bearbeiten</button>
                 <button style={dangerBtn} onClick={() => handleDeleteCustomer(customer.id)}>Löschen</button>
               </div>
@@ -129,81 +288,200 @@ export default function CustomersPage() {
           )}
 
           {/* Devices Table */}
-          {customer.devices.length > 0 && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px' }}>
+          {isCustomerExpanded && groupedDevices.length > 0 && (
+            <table style={deviceTableStyle}>
+              <colgroup>
+                <col style={{ width: '36%' }} />
+                <col style={{ width: '10%' }} />
+                <col style={{ width: '26%' }} />
+                <col style={{ width: '28%' }} />
+              </colgroup>
               <thead>
                 <tr style={{ borderBottom: '1px solid #334155' }}>
                   <th style={{ textAlign: 'left', padding: '8px', color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>Gerät</th>
-                  <th style={{ textAlign: 'left', padding: '8px', color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>Produkt</th>
-                  <th style={{ textAlign: 'left', padding: '8px', color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>Version</th>
+                  <th style={{ textAlign: 'left', padding: '8px', color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>Produkte</th>
+                  <th style={{ textAlign: 'left', padding: '8px', color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>Details</th>
                   <th style={{ textAlign: 'right', padding: '8px', color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>Aktionen</th>
                 </tr>
               </thead>
               <tbody>
-                {customer.devices.map(device => (
-                  <tr key={device.id} style={{ borderBottom: '1px solid #1e293b' }}>
-                    {editingDevice?.id === device.id ? (
-                      <>
-                        <td style={{ padding: '8px' }}>
-                          <input style={{ ...inputStyle, width: '100%' }} value={editingDevice.name}
-                            onChange={e => setEditingDevice({ ...editingDevice, name: e.target.value })} />
+                {groupedDevices.map(group => {
+                  const isExpanded = !!expandedDevices[group.key];
+                  const availableProductsForAdd = products.filter(p => !group.entries.some(entry => entry.product === p));
+
+                  return (
+                    <React.Fragment key={group.key}>
+                    <tr style={{ borderBottom: '1px solid #1e293b' }}>
+                      <td style={{ padding: '8px' }}>
+                        <button
+                          style={{ ...ghostBtn, padding: '4px 10px', fontSize: '12px' }}
+                          onClick={() => toggleExpandedDevice(group.key)}
+                        >
+                          {isExpanded ? '▾' : '▸'} {group.name}
+                        </button>
+                      </td>
+                      <td style={{ padding: '8px', color: '#94a3b8', fontSize: '14px' }}>{group.entries.some(e => !isUnknownEntry(e)) ? group.entries.length : 0}</td>
+                      <td style={{ ...truncateCellStyle, padding: '8px', color: '#94a3b8', fontSize: '13px' }}>
+                        {group.orgId ? `Org ${group.orgId}` : 'Manuell'}{group.ninjaDeviceId ? ` · Device ${group.ninjaDeviceId}` : ''}
+                      </td>
+                      <td style={{ padding: '8px', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                          <button
+                            style={ghostBtn}
+                            onClick={() => setAddingProductForDevice({
+                              customerId: customer.id,
+                              groupKey: group.key,
+                              deviceName: group.name,
+                              orgId: group.orgId,
+                              ninjaDeviceId: group.ninjaDeviceId,
+                              product: '',
+                              currentVersion: '',
+                            })}
+                          >
+                            + Produkt
+                          </button>
+                          <button style={dangerBtn} onClick={() => {
+                            if (!confirm('Alle Produkt-Einträge für dieses Gerät löschen?')) return;
+                            Promise.all(group.entries.map(entry => deleteDevice(entry.id))).then(() => load());
+                          }}>Gerät löschen</button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {addingProductForDevice?.groupKey === group.key && (
+                      <tr style={{ borderBottom: '1px solid #1e293b' }}>
+                        <td style={{ padding: '8px', color: '#94a3b8', fontSize: '13px' }}>
+                          Neues Produkt für {group.name}
+                          <div style={{ marginTop: '6px', color: '#64748b', fontSize: '12px' }}>
+                            Vorhanden: {group.entries.some(e => !isUnknownEntry(e)) ? group.entries.map(e => `${e.product} (${e.currentVersion})`).join(', ') : 'keine'}
+                          </div>
                         </td>
                         <td style={{ padding: '8px' }}>
-                          <select style={{ ...inputStyle, width: '100%' }} value={editingDevice.product}
-                            onChange={e => setEditingDevice({ ...editingDevice, product: e.target.value })}>
-                            {products.map(p => <option key={p} value={p}>{p}</option>)}
+                          <select
+                            style={{ ...inputStyle, width: '100%' }}
+                            value={addingProductForDevice.product}
+                            onChange={e => setAddingProductForDevice({ ...addingProductForDevice, product: e.target.value })}
+                          >
+                            <option value="">Produkt wählen...</option>
+                            {availableProductsForAdd.map(p => <option key={p} value={p}>{p}</option>)}
                           </select>
+                          {availableProductsForAdd.length === 0 && (
+                            <div style={{ marginTop: '6px', color: '#64748b', fontSize: '12px' }}>Alle Produkte bereits vorhanden.</div>
+                          )}
                         </td>
                         <td style={{ padding: '8px' }}>
-                          <input style={{ ...inputStyle, width: '100%' }} value={editingDevice.currentVersion}
-                            onChange={e => setEditingDevice({ ...editingDevice, currentVersion: e.target.value })} />
+                          <input
+                            style={{ ...inputStyle, width: '100%' }}
+                            placeholder="Version"
+                            value={addingProductForDevice.currentVersion}
+                            onChange={e => setAddingProductForDevice({ ...addingProductForDevice, currentVersion: e.target.value })}
+                          />
                         </td>
                         <td style={{ padding: '8px', textAlign: 'right' }}>
                           <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-                            <button style={primaryBtn} onClick={handleUpdateDevice}>OK</button>
-                            <button style={ghostBtn} onClick={() => setEditingDevice(null)}>X</button>
+                            <button style={primaryBtn} onClick={handleCreateAdditionalProduct}>Speichern</button>
+                            <button style={ghostBtn} onClick={() => setAddingProductForDevice(null)}>Abbrechen</button>
                           </div>
                         </td>
-                      </>
-                    ) : (
-                      <>
-                        <td style={{ padding: '8px', color: '#e2e8f0', fontSize: '14px' }}>{device.name}</td>
-                        <td style={{ padding: '8px', color: '#94a3b8', fontSize: '14px' }}>{device.product}</td>
-                        <td style={{ padding: '8px', color: '#94a3b8', fontSize: '14px', fontFamily: 'monospace' }}>{device.currentVersion}</td>
-                        <td style={{ padding: '8px', textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-                            <button style={ghostBtn} onClick={() => setEditingDevice({ ...device, customerId: customer.id })}>Bearbeiten</button>
-                            <button style={dangerBtn} onClick={() => handleDeleteDevice(device.id)}>Löschen</button>
-                          </div>
-                        </td>
-                      </>
+                      </tr>
                     )}
-                  </tr>
-                ))}
+
+                    {isExpanded && group.entries.map(device => (
+                      <tr key={device.id} style={{ borderBottom: '1px solid #1e293b' }}>
+                        {editingDevice?.id === device.id ? (
+                          <>
+                            <td style={{ padding: '8px 8px 8px 24px', color: '#64748b', fontSize: '13px' }}>↳ {group.name}</td>
+                            <td style={{ padding: '8px' }}>
+                              <select style={{ ...inputStyle, width: '100%' }} value={editingDevice.product}
+                                onChange={e => setEditingDevice({ ...editingDevice, product: e.target.value })}>
+                                {products.map(p => <option key={p} value={p}>{p}</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: '8px' }}>
+                              <input style={{ ...inputStyle, width: '100%' }} value={editingDevice.currentVersion}
+                                onChange={e => setEditingDevice({ ...editingDevice, currentVersion: e.target.value })} />
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                <button style={primaryBtn} onClick={handleUpdateDevice}>OK</button>
+                                <button style={ghostBtn} onClick={() => setEditingDevice(null)}>X</button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td style={{ padding: '8px 8px 8px 24px', color: '#64748b', fontSize: '13px' }}>↳ {group.name}</td>
+                            <td style={{ padding: '8px', color: '#94a3b8', fontSize: '14px' }}>{device.product}</td>
+                            <td style={{ padding: '8px', color: '#94a3b8', fontSize: '14px', fontFamily: 'monospace' }}>{device.currentVersion}</td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                <button style={ghostBtn} onClick={() => setEditingDevice({ ...device, customerId: customer.id })}>Bearbeiten</button>
+                                <button style={dangerBtn} onClick={() => handleDeleteDevice(device.id)}>Löschen</button>
+                              </div>
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                )})}
               </tbody>
             </table>
           )}
 
-          {/* Add Device */}
-          {addingDevice === customer.id ? (
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <input style={inputStyle} placeholder="Gerätename" value={deviceForm.name}
-                onChange={e => setDeviceForm({ ...deviceForm, name: e.target.value })} />
-              <select style={inputStyle} value={deviceForm.product}
-                onChange={e => setDeviceForm({ ...deviceForm, product: e.target.value })}>
-                <option value="">Produkt wählen...</option>
-                {products.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <input style={inputStyle} placeholder="Version (z.B. 7.2.1)" value={deviceForm.currentVersion}
-                onChange={e => setDeviceForm({ ...deviceForm, currentVersion: e.target.value })} />
-              <button style={primaryBtn} onClick={() => handleCreateDevice(customer.id)}>Hinzufügen</button>
-              <button style={ghostBtn} onClick={() => { setAddingDevice(null); setDeviceForm({ name: '', product: '', currentVersion: '' }); }}>Abbrechen</button>
-            </div>
-          ) : (
-            <button style={{ ...ghostBtn, fontSize: '12px' }} onClick={() => setAddingDevice(customer.id)}>+ Gerät hinzufügen</button>
+          {isCustomerExpanded && groupedDevices.length === 0 && (
+            <p style={{ color: '#64748b', margin: '8px 0 12px 0' }}>Keine Geräte vorhanden.</p>
           )}
-        </div>
-      ))}
+
+          {/* Add Device */}
+          {isCustomerExpanded && addingDevice === customer.id ? (
+            <div style={{ display: 'grid', gap: '12px' }}>
+              <input style={{ ...inputStyle, maxWidth: '360px' }} placeholder="Gerätename" value={deviceForm.name}
+                onChange={e => setDeviceForm({ ...deviceForm, name: e.target.value })} />
+
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(220px, 320px) minmax(220px, 1fr)',
+                gap: '8px 16px',
+                alignItems: 'center',
+              }}>
+                <div style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>Produkt</div>
+                <div style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>Version</div>
+                {products.map(p => {
+                  const selected = deviceForm.versions[p] !== undefined;
+                  return (
+                    <React.Fragment key={p}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#e2e8f0', fontSize: '14px' }}>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleDeviceProduct(p)}
+                        />
+                        {p}
+                      </label>
+                      <input
+                        style={{ ...inputStyle, width: '100%' }}
+                        placeholder="Version (z.B. 7.2.1)"
+                        value={selected ? deviceForm.versions[p] : ''}
+                        onChange={e => setDeviceProductVersion(p, e.target.value)}
+                        disabled={!selected}
+                      />
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button style={primaryBtn} onClick={() => handleCreateDevice(customer.id)}>Hinzufügen</button>
+                <button style={ghostBtn} onClick={() => { setAddingDevice(null); setDeviceForm({ name: '', versions: {} }); }}>Abbrechen</button>
+              </div>
+            </div>
+          ) : isCustomerExpanded ? (
+            <button style={{ ...ghostBtn, fontSize: '12px' }} onClick={() => setAddingDevice(customer.id)}>+ Gerät hinzufügen</button>
+          ) : null}
+          </div>
+        );
+      })}
 
       {customers.length === 0 && (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>Keine Kunden vorhanden. Erstellen Sie einen neuen Kunden.</p>

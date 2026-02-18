@@ -68,6 +68,8 @@ export interface MockDevice {
   name: string;
   product: string;
   currentVersion: string;
+  orgId?: number;
+  ninjaDeviceId?: number;
 }
 
 export interface MockCustomer {
@@ -158,13 +160,28 @@ export async function deleteCustomer(id: number): Promise<void> {
 
 // --- Admin: Devices ---
 
-export async function createDevice(customerId: number, data: { name: string; product: string; currentVersion: string }): Promise<{ ok: boolean; id: number }> {
+export async function createDevice(customerId: number, data: {
+  name: string;
+  product: string;
+  currentVersion: string;
+  orgId?: number;
+  ninjaDeviceId?: number;
+}): Promise<{ ok: boolean; id: number }> {
   const res = await fetch(`${BASE}/admin/customers/${customerId}/devices`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to create device');
+  return res.json();
+}
+
+export async function triggerNinjaSync(): Promise<{ ok: boolean; customers: number; devices: number }> {
+  const res = await fetch(`${BASE}/admin/ninjaone/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error('Failed to sync NinjaOne data');
   return res.json();
 }
 
