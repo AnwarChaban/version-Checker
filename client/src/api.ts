@@ -5,6 +5,8 @@ export interface DeviceStatus {
   name: string;
   currentVersion: string;
   status: 'up-to-date' | 'update-available' | 'major-update' | 'unknown';
+  orgId?: number;
+  ninjaDeviceId?: number;
 }
 
 export interface CustomerStatus {

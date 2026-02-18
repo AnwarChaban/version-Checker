@@ -20,6 +20,8 @@ export interface ProductStatus {
       name: string;
       currentVersion: string;
       status: ComparisonResult['status'];
+      orgId?: number;
+      ninjaDeviceId?: number;
     }>;
   }>;
 }
@@ -54,6 +56,8 @@ router.get('/products', async (_req, res) => {
                 name: d.name,
                 currentVersion: d.currentVersion,
                 status: comparison.status,
+                orgId: d.orgId,
+                ninjaDeviceId: d.ninjaDeviceId,
               };
             });
 

@@ -21,6 +21,18 @@ interface SoftwareEntry {
   currentVersion: string;
 }
 
+const GLOBAL_IGNORED_VERSION_VALUES = new Set([
+  'nicht installiert',
+  'not installed',
+  'nichtinstalliert',
+  'n/a',
+  'na',
+  '-',
+  'none',
+  'uninstalliert',
+  'nicht vorhanden',
+]);
+
 const PRODUCT_VERSION_FIELD_MAP: Record<string, string[]> = {
   'teamviewer': ['teamViewerVersion', 'teamviewerVersion', 'tvVersion'],
   'synology-dsm': ['NASversion', 'nasVersion', 'synologyVersion', 'dsmVersion'],
@@ -130,6 +142,12 @@ function extractSoftwareEntries(device: any, fieldMap: Record<string, string>): 
     const product = productRaw.trim();
     const currentVersion = versionRaw.trim();
     if (!product || !currentVersion) return;
+
+    const normalizedVersion = currentVersion.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (GLOBAL_IGNORED_VERSION_VALUES.has(normalizedVersion)) {
+      return;
+    }
+
     const key = `${product.toLowerCase()}::${currentVersion.toLowerCase()}`;
     if (seen.has(key)) return;
     seen.add(key);
