@@ -1,6 +1,6 @@
-import { config } from '../config';
 import { type UpdateStatus } from './comparator';
 import { productNames } from './version-fetcher';
+import { getSlackWebhookUrl, getWebhookUrl } from './runtime-settings';
 
 export interface UpdateNotification {
   product: string;
@@ -13,6 +13,8 @@ export interface UpdateNotification {
 
 export async function sendNotifications(updates: UpdateNotification[]): Promise<void> {
   const actionable = updates.filter(u => u.status === 'update-available' || u.status === 'major-update');
+  const webhookUrl = getWebhookUrl();
+  const slackWebhookUrl = getSlackWebhookUrl();
 
   if (actionable.length === 0) {
     console.log('[Notifier] All versions up to date, no notifications needed');
@@ -32,13 +34,13 @@ export async function sendNotifications(updates: UpdateNotification[]): Promise<
   console.log('══════════════════════════════════════════\n');
 
   // Webhook notification
-  if (config.webhookUrl) {
-    await sendWebhook(config.webhookUrl, actionable);
+  if (webhookUrl) {
+    await sendWebhook(webhookUrl, actionable);
   }
 
   // Slack notification
-  if (config.slackWebhookUrl) {
-    await sendSlackNotification(actionable);
+  if (slackWebhookUrl) {
+    await sendSlackNotification(slackWebhookUrl, actionable);
   }
 }
 
@@ -66,7 +68,7 @@ async function sendWebhook(url: string, updates: UpdateNotification[]): Promise<
   }
 }
 
-async function sendSlackNotification(updates: UpdateNotification[]): Promise<void> {
+async function sendSlackNotification(slackWebhookUrl: string, updates: UpdateNotification[]): Promise<void> {
   const blocks = [
     {
       type: 'header',
@@ -82,7 +84,7 @@ async function sendSlackNotification(updates: UpdateNotification[]): Promise<voi
   ];
 
   try {
-    const res = await fetch(config.slackWebhookUrl, {
+    const res = await fetch(slackWebhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ blocks }),

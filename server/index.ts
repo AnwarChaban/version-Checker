@@ -12,6 +12,7 @@ import { fetchAllLatestVersions } from './services/version-fetcher';
 import { getCustomers, syncNinjaOneData } from './services/ninjaone';
 import { compareVersions } from './services/comparator';
 import { sendNotifications, type UpdateNotification } from './services/notifier';
+import { isNinjaOneConfigured } from './services/runtime-settings';
 
 const app = express();
 
@@ -64,25 +65,27 @@ async function runScheduledCheck() {
 cron.schedule(config.checkCron, runScheduledCheck);
 console.log(`[Scheduler] Cron scheduled: ${config.checkCron}`);
 
-if (config.useNinjaOne) {
-  cron.schedule(config.ninjaSyncCron, async () => {
-    console.log(`[Scheduler] Running NinjaOne sync at ${new Date().toISOString()}`);
-    try {
-      const result = await syncNinjaOneData();
-      console.log(`[Scheduler] NinjaOne sync complete. ${result.customers} customer(s), ${result.devices} device entry/entries.`);
-    } catch (error) {
-      console.error('[Scheduler] NinjaOne sync failed:', error);
-    }
-  });
-  console.log(`[Scheduler] NinjaOne sync cron scheduled: ${config.ninjaSyncCron}`);
-}
+cron.schedule(config.ninjaSyncCron, async () => {
+  if (!isNinjaOneConfigured()) {
+    return;
+  }
+
+  console.log(`[Scheduler] Running NinjaOne sync at ${new Date().toISOString()}`);
+  try {
+    const result = await syncNinjaOneData();
+    console.log(`[Scheduler] NinjaOne sync complete. ${result.customers} customer(s), ${result.devices} device entry/entries.`);
+  } catch (error) {
+    console.error('[Scheduler] NinjaOne sync failed:', error);
+  }
+});
+console.log(`[Scheduler] NinjaOne sync cron scheduled: ${config.ninjaSyncCron}`);
 
 // Start server
 app.listen(config.port, () => {
   console.log(`[Server] Version Checker running on http://localhost:${config.port}`);
-  console.log(`[Server] NinjaOne: ${config.useNinjaOne ? 'API mode' : 'Mock mode (no API key)'}`);
+  console.log(`[Server] NinjaOne: runtime-config enabled`);
 
-  if (config.useNinjaOne) {
+  if (isNinjaOneConfigured()) {
     console.log('[Scheduler] Running initial NinjaOne sync...');
     syncNinjaOneData().catch(error => {
       console.error('[Scheduler] Initial NinjaOne sync failed:', error);

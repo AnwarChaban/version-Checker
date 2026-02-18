@@ -1,5 +1,6 @@
 import { config } from '../config';
 import { getDb } from '../db';
+import { getNinjaOneRuntimeConfig, isNinjaOneConfigured } from './runtime-settings';
 
 export interface Customer {
   id: number;
@@ -112,7 +113,7 @@ function getFieldValue(fieldMap: Record<string, string>, aliases: string[]): str
   return '';
 }
 
-async function fetchDeviceCustomFieldMap(apiUrl: string, deviceId: number, token: string): Promise<Record<string, string>> {
+async function fetchDeviceCustomFieldMap(apiUrl: string, deviceId: number, authorizationHeader: string): Promise<Record<string, string>> {
   const endpoints = [
     `${apiUrl}/device/${deviceId}/custom-fields`,
   ];
@@ -120,7 +121,7 @@ async function fetchDeviceCustomFieldMap(apiUrl: string, deviceId: number, token
   for (const endpoint of endpoints) {
     const res = await fetch(endpoint, {
       headers: {
-        'Authorization': `Bearer ${token}`,
+        'Authorization': authorizationHeader,
         'Accept': 'application/json',
       },
     });
@@ -200,7 +201,7 @@ function getDevicesFromApiPayload(payload: any): any[] {
   return [];
 }
 
-async function fetchOrganizationDevices(apiUrl: string, orgId: number, token: string): Promise<any[]> {
+async function fetchOrganizationDevices(apiUrl: string, orgId: number, authorizationHeader: string): Promise<any[]> {
   const endpoints = [
     `${apiUrl}/organization/${orgId}/devices`,
   ];
@@ -208,7 +209,7 @@ async function fetchOrganizationDevices(apiUrl: string, orgId: number, token: st
   for (const endpoint of endpoints) {
     const res = await fetch(endpoint, {
       headers: {
-        'Authorization': `Bearer ${token}`,
+        'Authorization': authorizationHeader,
         'Accept': 'application/json',
       },
     });
@@ -260,14 +261,32 @@ function saveCustomersToDb(customers: Customer[]): void {
 // Token cache
 let cachedToken: string | null = null;
 let tokenExpiry: number = 0;
+let tokenCacheKey: string | null = null;
 
-async function getAccessToken(): Promise<string> {
+function getAuthBaseUrl(apiUrl: string): string {
+  if (!apiUrl) return 'https://eu.ninjarmm.com';
+  try {
+    const normalized = apiUrl.startsWith('http') ? apiUrl : `https://${apiUrl}`;
+    const url = new URL(normalized);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return 'https://eu.ninjarmm.com';
+  }
+}
+
+async function getAccessToken(apiUrl: string, clientId: string, clientSecret: string): Promise<string> {
+  const currentCacheKey = `${apiUrl}::${clientId}`;
+
+  if (tokenCacheKey !== currentCacheKey) {
+    cachedToken = null;
+    tokenExpiry = 0;
+    tokenCacheKey = currentCacheKey;
+  }
+
   // Return cached token if still valid
   if (cachedToken && Date.now() < tokenExpiry) {
     return cachedToken as string;
   }
-
-  const { clientId, clientSecret } = config.ninjaone;
 
   if (!clientId || !clientSecret) {
     throw new Error('NinjaOne Client ID and Client Secret are required');
@@ -275,7 +294,7 @@ async function getAccessToken(): Promise<string> {
 
   console.log('[NinjaOne] Requesting new access token...');
 
-  const tokenUrl = 'https://eu.ninjarmm.com/ws/oauth/token';
+  const tokenUrl = `${getAuthBaseUrl(apiUrl)}/ws/oauth/token`;
   const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: {
@@ -303,13 +322,27 @@ async function getAccessToken(): Promise<string> {
   return cachedToken as string;
 }
 
+async function getAuthorizationHeader(apiUrl: string, apiKey: string, clientId: string, clientSecret: string): Promise<string> {
+  if (apiKey) {
+    return `Bearer ${apiKey}`;
+  }
+
+  const token = await getAccessToken(apiUrl, clientId, clientSecret);
+  return `Bearer ${token}`;
+}
+
 async function fetchFromNinjaOne(): Promise<Customer[]> {
-  const { apiUrl } = config.ninjaone;
-  const token = await getAccessToken();
+  const { apiUrl, apiKey, clientId, clientSecret } = getNinjaOneRuntimeConfig();
+
+  if (!apiUrl) {
+    throw new Error('NinjaOne API URL is required');
+  }
+
+  const authorizationHeader = await getAuthorizationHeader(apiUrl, apiKey, clientId, clientSecret);
 
   const res = await fetch(`${apiUrl}/organizations`, {
     headers: {
-      'Authorization': `Bearer ${token}`,
+      'Authorization': authorizationHeader,
       'Accept': 'application/json',
     },
   });
@@ -323,7 +356,7 @@ async function fetchFromNinjaOne(): Promise<Customer[]> {
 
   const customers: Customer[] = [];
   for (const org of orgs) {
-    const devices = await fetchOrganizationDevices(apiUrl, org.id, token);
+    const devices = await fetchOrganizationDevices(apiUrl, org.id, authorizationHeader);
     console.log(`[NinjaOne] Fetching devices for organization ${org.id} from NinjaOne API...`);
     const mappedDevices: Device[] = [];
 
@@ -333,7 +366,7 @@ async function fetchFromNinjaOne(): Promise<Customer[]> {
 
       const customFieldMap = {
         ...toCustomFieldMap(d?.customFields),
-        ...(await fetchDeviceCustomFieldMap(apiUrl, rawId, token)),
+        ...(await fetchDeviceCustomFieldMap(apiUrl, rawId, authorizationHeader)),
       };
 
       const name = d.systemName || d.dnsName || `Device-${d.id}`;
@@ -395,7 +428,7 @@ function getMockData(): Customer[] {
 }
 
 export async function syncNinjaOneData(): Promise<{ customers: number; devices: number }> {
-  if (!config.useNinjaOne) {
+  if (!isNinjaOneConfigured()) {
     return { customers: 0, devices: 0 };
   }
 
@@ -407,7 +440,7 @@ export async function syncNinjaOneData(): Promise<{ customers: number; devices: 
 }
 
 export async function getCustomers(): Promise<Customer[]> {
-  if (config.useNinjaOne) {
+  if (isNinjaOneConfigured()) {
     return getMockData();
   }
   console.log('[NinjaOne] No API key configured, using mock data');
@@ -415,5 +448,5 @@ export async function getCustomers(): Promise<Customer[]> {
 }
 
 export function isUsingMockData(): boolean {
-  return !config.useNinjaOne;
+  return !isNinjaOneConfigured();
 }

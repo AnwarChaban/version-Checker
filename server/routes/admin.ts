@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { getDb } from '../db';
 import { productNames } from '../services/version-fetcher';
-import { config } from '../config';
 import { syncNinjaOneData } from '../services/ninjaone';
+import { isNinjaOneConfigured } from '../services/runtime-settings';
 
 const router = Router();
 
@@ -185,7 +185,7 @@ router.delete('/admin/devices/:id', (req, res) => {
 });
 
 router.post('/admin/ninjaone/sync', async (_req, res) => {
-  if (!config.useNinjaOne) {
+  if (!isNinjaOneConfigured()) {
     res.status(400).json({ error: 'NinjaOne is not configured' });
     return;
   }
