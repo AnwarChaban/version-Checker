@@ -80,6 +80,33 @@ export interface MockCustomer {
   devices: MockDevice[];
 }
 
+export type ConnectorType = 'ninjaone' | 'unifi' | 'sophos' | 'generic-http';
+
+export interface Connector {
+  id: number;
+  name: string;
+  type: ConnectorType;
+  baseUrl: string;
+  tokenUrl: string;
+  authMode: 'apiKey' | 'oauth2ClientCredentials';
+  apiKey: string;
+  clientId: string;
+  clientSecret: string;
+  active: boolean;
+  productScope: string[];
+  customerScopeMode: 'all' | 'manual';
+  fieldMapping: Record<string, string>;
+  uiColor: string;
+  lastTestAt?: string;
+  lastTestStatus?: string;
+  lastTestMessage?: string;
+  lastSyncAt?: string;
+  lastSyncStatus?: string;
+  lastSyncMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // --- Admin: Scraper Products ---
 
 export async function fetchScraperProducts(): Promise<ScraperProduct[]> {
@@ -199,6 +226,102 @@ export async function updateDevice(id: number, data: { name?: string; product?: 
 export async function deleteDevice(id: number): Promise<void> {
   const res = await fetch(`${BASE}/admin/devices/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete device');
+}
+
+// --- Admin: Connectors ---
+
+export async function fetchConnectors(): Promise<Connector[]> {
+  const res = await fetch(`${BASE}/admin/connectors`);
+  if (!res.ok) throw new Error('Failed to fetch connectors');
+  return res.json();
+}
+
+export async function createConnector(data: {
+  name: string;
+  type: ConnectorType;
+  baseUrl: string;
+  tokenUrl?: string;
+  authMode: 'apiKey' | 'oauth2ClientCredentials';
+  apiKey?: string;
+  clientId?: string;
+  clientSecret?: string;
+  active?: boolean;
+  productScope?: string[];
+  customerScopeMode?: 'all' | 'manual';
+  fieldMapping?: Record<string, string>;
+  uiColor?: string;
+}): Promise<{ ok: boolean; id: number }> {
+  const res = await fetch(`${BASE}/admin/connectors`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to create connector');
+  return res.json();
+}
+
+export async function updateConnector(id: number, data: Partial<{
+  name: string;
+  type: ConnectorType;
+  baseUrl: string;
+  tokenUrl: string;
+  authMode: 'apiKey' | 'oauth2ClientCredentials';
+  apiKey: string;
+  clientId: string;
+  clientSecret: string;
+  active: boolean;
+  productScope: string[];
+  customerScopeMode: 'all' | 'manual';
+  fieldMapping: Record<string, string>;
+  uiColor: string;
+}>): Promise<void> {
+  const res = await fetch(`${BASE}/admin/connectors/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update connector');
+}
+
+export async function deleteConnector(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/admin/connectors/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete connector');
+}
+
+export async function testConnector(id: number): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch(`${BASE}/admin/connectors/${id}/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error('Failed to test connector');
+  return res.json();
+}
+
+export async function syncConnector(id: number): Promise<{ ok: boolean; customers?: number; devices?: number }> {
+  const res = await fetch(`${BASE}/admin/connectors/${id}/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error('Failed to sync connector');
+  return res.json();
+}
+
+export async function fetchConnectorCustomers(id: number): Promise<{
+  customerScopeMode: 'all' | 'manual';
+  customers: Array<{ id: number; name: string; enabled: boolean }>;
+}> {
+  const res = await fetch(`${BASE}/admin/connectors/${id}/customers`);
+  if (!res.ok) throw new Error('Failed to fetch connector customers');
+  return res.json();
+}
+
+export async function updateConnectorCustomerScope(id: number, customerIds: number[]): Promise<void> {
+  const res = await fetch(`${BASE}/admin/connectors/${id}/customerscope`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customerIds }),
+  });
+  if (!res.ok) throw new Error('Failed to update connector customer scope');
 }
 
 // --- Admin: Settings ---
