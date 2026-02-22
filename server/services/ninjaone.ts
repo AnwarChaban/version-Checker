@@ -346,7 +346,7 @@ async function fetchFromNinjaOne(): Promise<Customer[]> {
       'Accept': 'application/json',
     },
   });
-   console.log('[NinjaOne] Fetching organizations from NinjaOne API...');
+  //  console.log('[NinjaOne] Fetching organizations from NinjaOne API...');
 
   if (!res.ok) {
     throw new Error(`NinjaOne API error: ${res.status} ${res.statusText}`);
@@ -357,7 +357,7 @@ async function fetchFromNinjaOne(): Promise<Customer[]> {
   const customers: Customer[] = [];
   for (const org of orgs) {
     const devices = await fetchOrganizationDevices(apiUrl, org.id, authorizationHeader);
-    console.log(`[NinjaOne] Fetching devices for organization ${org.id} from NinjaOne API...`);
+    // console.log(`[NinjaOne] Fetching devices for organization ${org.id} from NinjaOne API...`);
     const mappedDevices: Device[] = [];
 
     for (const d of devices) {

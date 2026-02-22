@@ -5,20 +5,27 @@ import { isNinjaOneConfigured } from '../services/runtime-settings';
 
 const router = Router();
 
+const ALLOWED_SETTINGS_KEYS = new Set([
+  'ninjaoneApiKey',
+  'ninjaoneClientId',
+  'ninjaoneClientSecret',
+  'unifiApiKey',
+  'unifiClientId',
+  'unifiClientSecret',
+  'sophosApiKey',
+  'sophosClientId',
+  'sophosClientSecret',
+]);
+
 router.get('/settings', (_req, res) => {
   const db = getDb();
   const settings: Record<string, string> = {
-    webhookUrl: config.webhookUrl || '',
-    slackWebhookUrl: config.slackWebhookUrl || '',
-    ninjaoneApiUrl: config.ninjaone.apiUrl || '',
     ninjaoneApiKey: config.ninjaone.apiKey || '',
     ninjaoneClientId: config.ninjaone.clientId || '',
     ninjaoneClientSecret: config.ninjaone.clientSecret || '',
-    unifiApiUrl: '',
     unifiApiKey: '',
     unifiClientId: '',
     unifiClientSecret: '',
-    sophosApiUrl: '',
     sophosApiKey: '',
     sophosClientId: '',
     sophosClientSecret: '',
@@ -26,7 +33,9 @@ router.get('/settings', (_req, res) => {
 
   const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
   for (const row of rows) {
-    settings[row.key] = row.value;
+    if (ALLOWED_SETTINGS_KEYS.has(row.key)) {
+      settings[row.key] = row.value;
+    }
   }
   settings.mockMode = isNinjaOneConfigured() ? 'false' : 'true';
   res.json(settings);
@@ -39,7 +48,7 @@ router.put('/settings', (req, res) => {
   const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
   const transaction = db.transaction(() => {
     for (const [key, value] of Object.entries(updates)) {
-      if (key === 'mockMode') continue; // read-only
+      if (!ALLOWED_SETTINGS_KEYS.has(key)) continue;
       stmt.run(key, value);
     }
   });

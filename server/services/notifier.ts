@@ -21,17 +21,17 @@ export async function sendNotifications(updates: UpdateNotification[]): Promise<
     return;
   }
 
-  // Console notification
-  console.log('\n══════════════════════════════════════════');
-  console.log('  VERSION UPDATES AVAILABLE');
-  console.log('══════════════════════════════════════════');
-  for (const update of actionable) {
-    const icon = update.status === 'major-update' ? '🔴' : '🟠';
-    const name = productNames[update.product] || update.product;
-    console.log(`${icon} ${name} @ ${update.customer} (${update.device})`);
-    console.log(`   ${update.currentVersion} → ${update.latestVersion}`);
-  }
-  console.log('══════════════════════════════════════════\n');
+  // // Console notification
+  // console.log('\n══════════════════════════════════════════');
+  // console.log('  VERSION UPDATES AVAILABLE');
+  // console.log('══════════════════════════════════════════');
+  // for (const update of actionable) {
+  //   const icon = update.status === 'major-update' ? '🔴' : '🟠';
+  //   const name = productNames[update.product] || update.product;
+  //   console.log(`${icon} ${name} @ ${update.customer} (${update.device})`);
+  //   console.log(`   ${update.currentVersion} → ${update.latestVersion}`);
+  // }
+  // console.log('══════════════════════════════════════════\n');
 
   // Webhook notification
   if (webhookUrl) {
