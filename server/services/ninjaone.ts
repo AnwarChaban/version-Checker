@@ -1,18 +1,11 @@
 import { config } from '../config';
 import { getDb } from '../db';
-import {
-  getActiveConnectorByType,
-  getConnectors,
-  getNinjaOneRuntimeConfig,
-  isNinjaOneConfigured,
-  isNinjaOneConnectorConfigured,
-} from './runtime-settings';
+import { getNinjaOneRuntimeConfig, isNinjaOneConfigured } from './runtime-settings';
 
 export interface Customer {
   id: number;
   name: string;
   devices: Device[];
-  sourceConnectorId?: number;
 }
 
 export interface Device {
@@ -22,7 +15,6 @@ export interface Device {
   currentVersion: string;
   orgId?: number;
   ninjaDeviceId?: number;
-  sourceConnectorId?: number;
 }
 
 interface SoftwareEntry {
@@ -234,36 +226,22 @@ async function fetchOrganizationDevices(apiUrl: string, orgId: number, authoriza
   return [];
 }
 
-function composeCustomerId(connectorId: number | null, orgId: number): number {
-  if (!connectorId) return orgId;
-  return connectorId * 1_000_000 + orgId;
-}
-
-function saveCustomersToDb(customers: Customer[], connectorId: number | null): void {
+function saveCustomersToDb(customers: Customer[]): void {
   const db = getDb();
 
-  const clearScopedDevices = connectorId
-    ? db.prepare('DELETE FROM mock_devices WHERE source_connector_id = ?')
-    : db.prepare('DELETE FROM mock_devices WHERE source_connector_id IS NULL');
-  const clearScopedCustomers = connectorId
-    ? db.prepare('DELETE FROM mock_customers WHERE source_connector_id = ?')
-    : db.prepare('DELETE FROM mock_customers WHERE source_connector_id IS NULL');
-  const insertCustomer = db.prepare('INSERT INTO mock_customers (id, name, source_connector_id) VALUES (?, ?, ?)');
+  const clearDevices = db.prepare('DELETE FROM mock_devices');
+  const clearCustomers = db.prepare('DELETE FROM mock_customers');
+  const insertCustomer = db.prepare('INSERT INTO mock_customers (id, name) VALUES (?, ?)');
   const insertDevice = db.prepare(
-    'INSERT INTO mock_devices (customer_id, name, product, current_version, org_id, ninja_device_id, source_connector_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO mock_devices (customer_id, name, product, current_version, org_id, ninja_device_id) VALUES (?, ?, ?, ?, ?, ?)'
   );
 
   const transaction = db.transaction(() => {
-    if (connectorId) {
-      clearScopedDevices.run(connectorId);
-      clearScopedCustomers.run(connectorId);
-    } else {
-      clearScopedDevices.run();
-      clearScopedCustomers.run();
-    }
+    clearDevices.run();
+    clearCustomers.run();
 
     for (const customer of customers) {
-      insertCustomer.run(customer.id, customer.name, connectorId ?? null);
+      insertCustomer.run(customer.id, customer.name);
       for (const device of customer.devices) {
         insertDevice.run(
           customer.id,
@@ -272,7 +250,6 @@ function saveCustomersToDb(customers: Customer[], connectorId: number | null): v
           device.currentVersion,
           device.orgId ?? null,
           device.ninjaDeviceId ?? null,
-          connectorId ?? null,
         );
       }
     }
@@ -297,8 +274,8 @@ function getAuthBaseUrl(apiUrl: string): string {
   }
 }
 
-async function getAccessToken(apiUrl: string, tokenUrl: string, clientId: string, clientSecret: string): Promise<string> {
-  const currentCacheKey = `${apiUrl}::${tokenUrl}::${clientId}`;
+async function getAccessToken(apiUrl: string, clientId: string, clientSecret: string): Promise<string> {
+  const currentCacheKey = `${apiUrl}::${clientId}`;
 
   if (tokenCacheKey !== currentCacheKey) {
     cachedToken = null;
@@ -317,8 +294,8 @@ async function getAccessToken(apiUrl: string, tokenUrl: string, clientId: string
 
   console.log('[NinjaOne] Requesting new access token...');
 
-  const oauthTokenUrl = tokenUrl || `${getAuthBaseUrl(apiUrl)}/ws/oauth/token`;
-  const response = await fetch(oauthTokenUrl, {
+  const tokenUrl = `${getAuthBaseUrl(apiUrl)}/ws/oauth/token`;
+  const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -345,30 +322,23 @@ async function getAccessToken(apiUrl: string, tokenUrl: string, clientId: string
   return cachedToken as string;
 }
 
-async function getAuthorizationHeader(apiUrl: string, tokenUrl: string, apiKey: string, clientId: string, clientSecret: string): Promise<string> {
+async function getAuthorizationHeader(apiUrl: string, apiKey: string, clientId: string, clientSecret: string): Promise<string> {
   if (apiKey) {
     return `Bearer ${apiKey}`;
   }
 
-  const token = await getAccessToken(apiUrl, tokenUrl, clientId, clientSecret);
+  const token = await getAccessToken(apiUrl, clientId, clientSecret);
   return `Bearer ${token}`;
 }
 
-async function fetchFromNinjaOne(connectorId: number | null): Promise<Customer[]> {
-  const { apiUrl, tokenUrl, apiKey, clientId, clientSecret } = getNinjaOneRuntimeConfig(connectorId ?? undefined);
-  const connector = connectorId
-    ? getConnectors().find(c => c.id === connectorId && c.type === 'ninjaone') || null
-    : null;
-  const allowedProducts = connector
-    ? new Set((connector.productScope || []).map(p => p.toLowerCase()))
-    : new Set<string>();
-  const hasProductScope = allowedProducts.size > 0;
+async function fetchFromNinjaOne(): Promise<Customer[]> {
+  const { apiUrl, apiKey, clientId, clientSecret } = getNinjaOneRuntimeConfig();
 
   if (!apiUrl) {
     throw new Error('NinjaOne API URL is required');
   }
 
-  const authorizationHeader = await getAuthorizationHeader(apiUrl, tokenUrl, apiKey, clientId, clientSecret);
+  const authorizationHeader = await getAuthorizationHeader(apiUrl, apiKey, clientId, clientSecret);
 
   const res = await fetch(`${apiUrl}/organizations`, {
     headers: {
@@ -402,44 +372,31 @@ async function fetchFromNinjaOne(connectorId: number | null): Promise<Customer[]
       const name = d.systemName || d.dnsName || `Device-${d.id}`;
       const softwareEntries = extractSoftwareEntries(d, customFieldMap);
       if (softwareEntries.length === 0) {
-        if (!hasProductScope) {
-          mappedDevices.push({
-            id: rawId * 100 + 1,
-            name,
-            product: 'unknown',
-            currentVersion: 'unknown',
-            orgId: Number(org.id),
-            ninjaDeviceId: rawId,
-            sourceConnectorId: connectorId ?? undefined,
-          });
-        }
+        mappedDevices.push({
+          id: rawId * 100 + 1,
+          name,
+          product: 'unknown',
+          currentVersion: 'unknown',
+          orgId: Number(org.id),
+          ninjaDeviceId: rawId,
+        });
         continue;
       }
 
-      const scopedEntries = hasProductScope
-        ? softwareEntries.filter(entry => allowedProducts.has(entry.product.toLowerCase()))
-        : softwareEntries;
-
-      mappedDevices.push(...scopedEntries.map((entry, index) => ({
+      mappedDevices.push(...softwareEntries.map((entry, index) => ({
         id: rawId * 100 + index + 1,
         name,
         product: entry.product,
         currentVersion: entry.currentVersion,
         orgId: Number(org.id),
         ninjaDeviceId: rawId,
-        sourceConnectorId: connectorId ?? undefined,
       })));
     }
 
-    if (hasProductScope && mappedDevices.length === 0) {
-      continue;
-    }
-
     customers.push({
-      id: composeCustomerId(connectorId, Number(org.id)),
+      id: org.id,
       name: org.name,
       devices: mappedDevices,
-      sourceConnectorId: connectorId ?? undefined,
     });
   }
 
@@ -448,81 +405,35 @@ async function fetchFromNinjaOne(connectorId: number | null): Promise<Customer[]
 
 function getMockData(): Customer[] {
   const db = getDb();
-  const connectors = getConnectors();
-  const connectorMap = new Map(connectors.map(c => [c.id, c]));
+  const customers = db.prepare('SELECT * FROM mock_customers').all() as { id: number; name: string }[];
 
-  const manualScopeRows = db.prepare('SELECT connector_id, customer_id, enabled FROM connector_customer_scope').all() as Array<{
-    connector_id: number;
-    customer_id: number;
-    enabled: number;
-  }>;
-  const manualScopeEnabled = new Set(
-    manualScopeRows
-      .filter(r => r.enabled === 1)
-      .map(r => `${r.connector_id}:${r.customer_id}`)
-  );
-
-  const customers = db.prepare('SELECT * FROM mock_customers').all() as Array<{ id: number; name: string; source_connector_id?: number | null }>;
-  const result: Customer[] = [];
-
-  for (const c of customers) {
-    const sourceConnectorId = c.source_connector_id ?? undefined;
-    if (sourceConnectorId) {
-      const connector = connectorMap.get(sourceConnectorId);
-      if (!connector || !connector.active) continue;
-      if (connector.customerScopeMode === 'manual' && !manualScopeEnabled.has(`${sourceConnectorId}:${c.id}`)) {
-        continue;
-      }
-    }
-
+  return customers.map(c => {
     const devices = db.prepare('SELECT * FROM mock_devices WHERE customer_id = ?').all(c.id) as {
-      id: number; name: string; product: string; current_version: string; org_id?: number | null; ninja_device_id?: number | null; source_connector_id?: number | null;
+      id: number; name: string; product: string; current_version: string; org_id?: number | null; ninja_device_id?: number | null;
     }[];
 
-    const connector = sourceConnectorId ? connectorMap.get(sourceConnectorId) : null;
-    const hasProductScope = !!connector && connector.productScope.length > 0;
-    const allowedProducts = hasProductScope
-      ? new Set(connector.productScope.map(p => p.toLowerCase()))
-      : new Set<string>();
-
-    const scopedDevices = hasProductScope
-      ? devices.filter(d => allowedProducts.has(d.product.toLowerCase()))
-      : devices;
-
-    if (scopedDevices.length === 0) continue;
-
-    result.push({
+    return {
       id: c.id,
       name: c.name,
-      sourceConnectorId,
-      devices: scopedDevices.map(d => ({
+      devices: devices.map(d => ({
         id: d.id,
         name: d.name,
         product: d.product,
         currentVersion: d.current_version,
         orgId: d.org_id ?? undefined,
         ninjaDeviceId: d.ninja_device_id ?? undefined,
-        sourceConnectorId: d.source_connector_id ?? undefined,
       })),
-    });
-  }
-
-  return result;
+    };
+  });
 }
 
-export async function syncNinjaOneData(connectorId?: number): Promise<{ customers: number; devices: number }> {
-  const targetConnectorId = connectorId ?? getActiveConnectorByType('ninjaone')?.id;
-
-  if (targetConnectorId) {
-    if (!isNinjaOneConnectorConfigured(targetConnectorId)) {
-      return { customers: 0, devices: 0 };
-    }
-  } else if (!isNinjaOneConfigured()) {
+export async function syncNinjaOneData(): Promise<{ customers: number; devices: number }> {
+  if (!isNinjaOneConfigured()) {
     return { customers: 0, devices: 0 };
   }
 
-  const customers = await fetchFromNinjaOne(targetConnectorId ?? null);
-  saveCustomersToDb(customers, targetConnectorId ?? null);
+  const customers = await fetchFromNinjaOne();
+  saveCustomersToDb(customers);
 
   const devices = customers.reduce((sum, customer) => sum + customer.devices.length, 0);
   return { customers: customers.length, devices };
