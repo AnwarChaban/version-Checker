@@ -13,6 +13,14 @@ export const config = {
     apiKey: process.env.NINJAONE_API_KEY || '',
   },
 
+  unifi: {
+    hostsApiUrl: 'https://api.ui.com/v1/hosts',
+    devicesApiUrl: 'https://api.ui.com/v1/devices',
+    apiKey: process.env.UNIFI_API_KEY || '',
+    clientId: process.env.UNIFI_CLIENT_ID || '',
+    clientSecret: process.env.UNIFI_CLIENT_SECRET || '',
+  },
+
   webhookUrl: process.env.WEBHOOK_URL || '',
   slackWebhookUrl: process.env.SLACK_WEBHOOK_URL || '',
 

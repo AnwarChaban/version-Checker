@@ -2,9 +2,13 @@ import React, { useState } from 'react';
 import type { ProductStatus } from '../api';
 import CustomerList from './CustomerList';
 
+function formatVersionForDisplay(version: string): string {
+  return version.replace(/\+[^\s]+$/, '').trim();
+}
+
 function getOverallStatus(product: ProductStatus): string {
-  if (!product.latestVersion) return '#374151';
   const statuses = product.customers.flatMap(c => c.devices.map(d => d.status));
+  if (statuses.length === 0) return '#374151';
   if (statuses.includes('major-update')) return '#7f1d1d';
   if (statuses.includes('update-available')) return '#78350f';
   if (statuses.length > 0 && statuses.every(s => s === 'up-to-date')) return '#065f46';
@@ -12,8 +16,8 @@ function getOverallStatus(product: ProductStatus): string {
 }
 
 function getStatusLabel(product: ProductStatus): { label: string; bg: string; color: string } {
-  if (!product.latestVersion) return { label: 'Unbekannt', bg: '#374151', color: '#9ca3af' };
   const statuses = product.customers.flatMap(c => c.devices.map(d => d.status));
+  if (statuses.length === 0) return { label: 'Unbekannt', bg: '#374151', color: '#9ca3af' };
   if (statuses.includes('major-update')) return { label: 'Major Update', bg: '#7f1d1d', color: '#fca5a5' };
   if (statuses.includes('update-available')) return { label: 'Update verfügbar', bg: '#78350f', color: '#fbbf24' };
   if (statuses.length > 0 && statuses.every(s => s === 'up-to-date')) return { label: 'Aktuell', bg: '#065f46', color: '#6ee7b7' };
@@ -64,10 +68,10 @@ export default function ProductCard({ product }: { product: ProductStatus }) {
             <a href={product.releaseUrl} target="_blank" rel="noopener noreferrer"
                onClick={e => e.stopPropagation()}
                style={{ color: '#60a5fa', textDecoration: 'none' }}>
-              {product.latestVersion}
+              {formatVersionForDisplay(product.latestVersion)}
             </a>
           ) : (
-            <span style={{ color: '#e2e8f0' }}>{product.latestVersion}</span>
+            <span style={{ color: '#e2e8f0' }}>{formatVersionForDisplay(product.latestVersion)}</span>
           )}
         </p>
       )}

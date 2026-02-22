@@ -1,9 +1,32 @@
 const BASE = '/api';
 
+async function throwApiError(res: Response, fallbackMessage: string): Promise<never> {
+  let message = '';
+
+  try {
+    const data = await res.json() as { error?: string; message?: string };
+    message = (data?.error || data?.message || '').trim();
+  } catch {
+  }
+
+  if (!message) {
+    try {
+      const text = await res.text();
+      if (text) {
+        message = text.trim();
+      }
+    } catch {
+    }
+  }
+
+  throw new Error(message || fallbackMessage);
+}
+
 export interface DeviceStatus {
   id: number;
   name: string;
   currentVersion: string;
+  latestVersion?: string;
   status: 'up-to-date' | 'update-available' | 'major-update' | 'unknown';
   orgId?: number;
   ninjaDeviceId?: number;
@@ -78,6 +101,22 @@ export interface MockCustomer {
   id: number;
   name: string;
   devices: MockDevice[];
+}
+
+export interface UnifiCustomerMapping {
+  id: number;
+  matchText: string;
+  customerId: number;
+  customerName: string;
+  createdAt: string;
+}
+
+export interface UnifiUnmatchedHost {
+  id: number;
+  hostId?: string;
+  hostName: string;
+  reason: string;
+  syncedAt: string;
 }
 
 // --- Admin: Scraper Products ---
@@ -183,7 +222,49 @@ export async function triggerNinjaSync(): Promise<{ ok: boolean; customers: numb
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
-  if (!res.ok) throw new Error('Failed to sync NinjaOne data');
+  if (!res.ok) return throwApiError(res, 'Failed to sync NinjaOne data');
+  return res.json();
+}
+
+export async function triggerUnifiSync(): Promise<{
+  ok: boolean;
+  customers: number;
+  hosts: number;
+  devices: number;
+  unmatchedHosts: number;
+  ambiguousHosts: number;
+}> {
+  const res = await fetch(`${BASE}/admin/unifi/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) return throwApiError(res, 'Failed to sync UniFi data');
+  return res.json();
+}
+
+export async function fetchUnifiMappings(): Promise<UnifiCustomerMapping[]> {
+  const res = await fetch(`${BASE}/admin/unifi/mappings`);
+  if (!res.ok) throw new Error('Failed to fetch UniFi mappings');
+  return res.json();
+}
+
+export async function createUnifiMapping(data: { matchText: string; customerId: number }): Promise<void> {
+  const res = await fetch(`${BASE}/admin/unifi/mappings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) return throwApiError(res, 'Failed to create UniFi mapping');
+}
+
+export async function deleteUnifiMapping(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/admin/unifi/mappings/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete UniFi mapping');
+}
+
+export async function fetchUnifiUnmatchedHosts(): Promise<UnifiUnmatchedHost[]> {
+  const res = await fetch(`${BASE}/admin/unifi/unmatched-hosts`);
+  if (!res.ok) throw new Error('Failed to fetch unmatched UniFi hosts');
   return res.json();
 }
 

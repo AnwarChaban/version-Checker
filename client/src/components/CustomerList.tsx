@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import type { CustomerStatus } from '../api';
 import StatusBadge from './StatusBadge';
 
+function formatVersionForDisplay(version: string): string {
+  return version.replace(/\+[^\s]+$/, '').trim();
+}
+
 export default function CustomerList({ customers }: { customers: CustomerStatus[] }) {
   const [expandedCustomers, setExpandedCustomers] = useState<Record<number, boolean>>({});
   const [expandedDevices, setExpandedDevices] = useState<Record<string, boolean>>({});
@@ -66,7 +70,10 @@ export default function CustomerList({ customers }: { customers: CustomerStatus[
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {device.status !== 'up-to-date' && (
-                  <code style={{ color: '#94a3b8', fontSize: '12px' }}>{device.currentVersion}</code>
+                  <code style={{ color: '#94a3b8', fontSize: '12px' }}>
+                    {formatVersionForDisplay(device.currentVersion)}
+                    {device.latestVersion && device.latestVersion !== device.currentVersion ? ` → ${formatVersionForDisplay(device.latestVersion)}` : ''}
+                  </code>
                 )}
                 <StatusBadge status={device.status} />
               </div>

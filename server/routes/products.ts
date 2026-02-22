@@ -19,6 +19,7 @@ export interface ProductStatus {
       id: number;
       name: string;
       currentVersion: string;
+      latestVersion?: string;
       status: ComparisonResult['status'];
       orgId?: number;
       ninjaDeviceId?: number;
@@ -48,13 +49,15 @@ router.get('/products', async (_req, res) => {
           const devices = (customer.devices || [])
             .filter(d => d.product === product)
             .map(d => {
-              const comparison = latestVersion
-                ? compareVersions(d.currentVersion, latestVersion, product)
+              const effectiveLatestVersion = d.latestVersion || latestVersion;
+              const comparison = effectiveLatestVersion
+                ? compareVersions(d.currentVersion, effectiveLatestVersion, product)
                 : { status: 'unknown' as const };
               return {
                 id: d.id,
                 name: d.name,
                 currentVersion: d.currentVersion,
+                latestVersion: d.latestVersion,
                 status: comparison.status,
                 orgId: d.orgId,
                 ninjaDeviceId: d.ninjaDeviceId,

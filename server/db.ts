@@ -63,13 +63,43 @@ function initDb() {
       name TEXT NOT NULL,
       product TEXT NOT NULL,
       current_version TEXT NOT NULL,
+      latest_version TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
       org_id INTEGER,
       ninja_device_id INTEGER,
       FOREIGN KEY (customer_id) REFERENCES mock_customers(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS unifi_customer_mappings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      match_text TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      customer_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (customer_id) REFERENCES mock_customers(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS unifi_unmatched_hosts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id TEXT,
+      host_name TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      synced_at TEXT NOT NULL
+    );
   `);
 
   ensureMockDeviceColumns();
+  cleanupLegacyProducts();
+}
+
+function cleanupLegacyProducts() {
+  const legacyProducts = ['unifi-network-controller', 'unifi-device-firmware'];
+
+  for (const product of legacyProducts) {
+    db.prepare('DELETE FROM scraper_products WHERE product = ?').run(product);
+    db.prepare('DELETE FROM version_cache WHERE product = ?').run(product);
+    db.prepare('DELETE FROM check_history WHERE product = ?').run(product);
+    db.prepare('UPDATE mock_devices SET product = ? WHERE product = ?').run('unifi-network', product);
+  }
 }
 
 function ensureMockDeviceColumns() {
@@ -83,21 +113,35 @@ function ensureMockDeviceColumns() {
   if (!existing.has('ninja_device_id')) {
     db.exec('ALTER TABLE mock_devices ADD COLUMN ninja_device_id INTEGER');
   }
+
+  if (!existing.has('source')) {
+    db.exec("ALTER TABLE mock_devices ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'");
+  }
+
+  if (!existing.has('latest_version')) {
+    db.exec('ALTER TABLE mock_devices ADD COLUMN latest_version TEXT');
+  }
+
+  db.exec("UPDATE mock_devices SET source = 'manual' WHERE source IS NULL OR TRIM(source) = ''");
 }
 
 function seedMockData() {
+  const ensureScraperProduct = db.prepare('INSERT OR IGNORE INTO scraper_products (product, active) VALUES (?, 1)');
+
   // Seed scraper products if empty
   const scraperCount = db.prepare('SELECT COUNT(*) as cnt FROM scraper_products').get() as { cnt: number };
   if (scraperCount.cnt === 0) {
     const scraperProducts = [
-      'synology-dsm', 'sophos-firewall', 'unifi-network',
+      'synology-dsm', 'sophos-firewall', 'unifi-os', 'unifi-network',
       'proxmox-ve', 'proxmox-backup', 'teamviewer',
     ];
-    const insertScraper = db.prepare('INSERT INTO scraper_products (product, active) VALUES (?, 1)');
     for (const p of scraperProducts) {
-      insertScraper.run(p);
+      ensureScraperProduct.run(p);
     }
   }
+
+  ensureScraperProduct.run('unifi-os');
+  ensureScraperProduct.run('unifi-network');
 
   // Seed mock customers + devices if empty
   const customerCount = db.prepare('SELECT COUNT(*) as cnt FROM mock_customers').get() as { cnt: number };

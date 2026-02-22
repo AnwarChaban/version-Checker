@@ -13,6 +13,7 @@ export interface Device {
   name: string;
   product: string;
   currentVersion: string;
+  latestVersion?: string;
   orgId?: number;
   ninjaDeviceId?: number;
 }
@@ -229,19 +230,22 @@ async function fetchOrganizationDevices(apiUrl: string, orgId: number, authoriza
 function saveCustomersToDb(customers: Customer[]): void {
   const db = getDb();
 
-  const clearDevices = db.prepare('DELETE FROM mock_devices');
-  const clearCustomers = db.prepare('DELETE FROM mock_customers');
-  const insertCustomer = db.prepare('INSERT INTO mock_customers (id, name) VALUES (?, ?)');
+  const upsertCustomer = db.prepare(
+    `INSERT INTO mock_customers (id, name) VALUES (?, ?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name`
+  );
+  const deleteNinjaDevicesForCustomer = db.prepare(
+    "DELETE FROM mock_devices WHERE customer_id = ? AND (source = 'ninja' OR (source = 'manual' AND ninja_device_id IS NOT NULL))"
+  );
   const insertDevice = db.prepare(
-    'INSERT INTO mock_devices (customer_id, name, product, current_version, org_id, ninja_device_id) VALUES (?, ?, ?, ?, ?, ?)'
+    "INSERT INTO mock_devices (customer_id, name, product, current_version, latest_version, source, org_id, ninja_device_id) VALUES (?, ?, ?, ?, NULL, 'ninja', ?, ?)"
   );
 
   const transaction = db.transaction(() => {
-    clearDevices.run();
-    clearCustomers.run();
-
     for (const customer of customers) {
-      insertCustomer.run(customer.id, customer.name);
+      upsertCustomer.run(customer.id, customer.name);
+      deleteNinjaDevicesForCustomer.run(customer.id);
+
       for (const device of customer.devices) {
         insertDevice.run(
           customer.id,
@@ -409,7 +413,7 @@ function getMockData(): Customer[] {
 
   return customers.map(c => {
     const devices = db.prepare('SELECT * FROM mock_devices WHERE customer_id = ?').all(c.id) as {
-      id: number; name: string; product: string; current_version: string; org_id?: number | null; ninja_device_id?: number | null;
+      id: number; name: string; product: string; current_version: string; latest_version?: string | null; org_id?: number | null; ninja_device_id?: number | null;
     }[];
 
     return {
@@ -420,6 +424,7 @@ function getMockData(): Customer[] {
         name: d.name,
         product: d.product,
         currentVersion: d.current_version,
+        latestVersion: d.latest_version ?? undefined,
         orgId: d.org_id ?? undefined,
         ninjaDeviceId: d.ninja_device_id ?? undefined,
       })),

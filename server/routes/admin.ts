@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { getDb } from '../db';
 import { productNames } from '../services/version-fetcher';
 import { syncNinjaOneData } from '../services/ninjaone';
-import { isNinjaOneConfigured } from '../services/runtime-settings';
+import { isNinjaOneConfigured, isUnifiConfigured } from '../services/runtime-settings';
+import { syncUnifiData } from '../services/unifi';
 
 const router = Router();
 
@@ -196,6 +197,107 @@ router.post('/admin/ninjaone/sync', async (_req, res) => {
   } catch (error) {
     res.status(500).json({ error: (error as Error).message });
   }
+});
+
+router.post('/admin/unifi/sync', async (_req, res) => {
+  if (!isUnifiConfigured()) {
+    res.status(400).json({ error: 'UniFi is not configured' });
+    return;
+  }
+
+  try {
+    const result = await syncUnifiData();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+router.get('/admin/unifi/mappings', (_req, res) => {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT m.id, m.match_text, m.customer_id, m.created_at, c.name AS customer_name
+    FROM unifi_customer_mappings m
+    JOIN mock_customers c ON c.id = m.customer_id
+    ORDER BY m.match_text ASC
+  `).all() as Array<{
+    id: number;
+    match_text: string;
+    customer_id: number;
+    customer_name: string;
+    created_at: string;
+  }>;
+
+  res.json(rows.map(row => ({
+    id: row.id,
+    matchText: row.match_text,
+    customerId: row.customer_id,
+    customerName: row.customer_name,
+    createdAt: row.created_at,
+  })));
+});
+
+router.post('/admin/unifi/mappings', (req, res) => {
+  const db = getDb();
+  const { matchText, customerId } = req.body as { matchText?: string; customerId?: number };
+  const normalizedMatchText = String(matchText || '').trim();
+
+  if (!normalizedMatchText || !customerId) {
+    res.status(400).json({ error: 'matchText und customerId sind erforderlich' });
+    return;
+  }
+
+  const customer = db.prepare('SELECT id FROM mock_customers WHERE id = ?').get(customerId) as { id: number } | undefined;
+  if (!customer) {
+    res.status(404).json({ error: 'Kunde nicht gefunden' });
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  try {
+    const result = db.prepare(
+      'INSERT INTO unifi_customer_mappings (match_text, customer_id, created_at) VALUES (?, ?, ?)'
+    ).run(normalizedMatchText, customerId, now);
+
+    res.json({ ok: true, id: result.lastInsertRowid });
+  } catch (error) {
+    const message = (error as Error).message || '';
+    if (message.includes('UNIQUE')) {
+      res.status(409).json({ error: 'Dieses Match-Muster existiert bereits' });
+      return;
+    }
+    res.status(500).json({ error: 'Mapping konnte nicht gespeichert werden' });
+  }
+});
+
+router.delete('/admin/unifi/mappings/:id', (req, res) => {
+  const db = getDb();
+  db.prepare('DELETE FROM unifi_customer_mappings WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+router.get('/admin/unifi/unmatched-hosts', (_req, res) => {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT id, host_id, host_name, reason, synced_at
+    FROM unifi_unmatched_hosts
+    ORDER BY host_name COLLATE NOCASE ASC
+  `).all() as Array<{
+    id: number;
+    host_id: string | null;
+    host_name: string;
+    reason: string;
+    synced_at: string;
+  }>;
+
+  res.json(rows.map(row => ({
+    id: row.id,
+    hostId: row.host_id,
+    hostName: row.host_name,
+    reason: row.reason,
+    syncedAt: row.synced_at,
+  })));
 });
 
 export default router;

@@ -57,6 +57,11 @@ function Dashboard() {
   const updatesAvailable = products.reduce((sum, p) =>
     sum + p.customers.reduce((s, c) =>
       s + c.devices.filter(d => d.status === 'update-available' || d.status === 'major-update').length, 0), 0);
+  const productsWithUpdates = products.filter(product =>
+    product.customers.some(customer =>
+      customer.devices.some(device => device.status === 'update-available' || device.status === 'major-update')
+    )
+  );
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '32px 16px' }}>
@@ -127,9 +132,14 @@ function Dashboard() {
           gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))',
           gap: '16px',
         }}>
-          {products.map(product => (
+          {productsWithUpdates.map(product => (
             <ProductCard key={product.product} product={product} />
           ))}
+          {productsWithUpdates.length === 0 && (
+            <p style={{ color: '#64748b', fontSize: '14px', gridColumn: '1 / -1' }}>
+              Keine Updates erforderlich
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -19,6 +19,14 @@ export interface NinjaOneRuntimeConfig {
   clientSecret: string;
 }
 
+export interface UnifiRuntimeConfig {
+  hostsApiUrl: string;
+  devicesApiUrl: string;
+  apiKey: string;
+  clientId: string;
+  clientSecret: string;
+}
+
 export function getNinjaOneRuntimeConfig(): NinjaOneRuntimeConfig {
   return {
     apiUrl: getSettingOrFallback('ninjaoneApiUrl', config.ninjaone.apiUrl),
@@ -34,6 +42,21 @@ export function isNinjaOneConfigured(): boolean {
   const hasApiKey = !!runtime.apiKey;
   const hasOauth = !!runtime.clientId && !!runtime.clientSecret;
   return hasApiUrl && (hasApiKey || hasOauth);
+}
+
+export function getUnifiRuntimeConfig(): UnifiRuntimeConfig {
+  return {
+    hostsApiUrl: config.unifi.hostsApiUrl,
+    devicesApiUrl: config.unifi.devicesApiUrl,
+    apiKey: getSettingOrFallback('unifiApiKey', config.unifi.apiKey),
+    clientId: getSettingOrFallback('unifiClientId', config.unifi.clientId),
+    clientSecret: getSettingOrFallback('unifiClientSecret', config.unifi.clientSecret),
+  };
+}
+
+export function isUnifiConfigured(): boolean {
+  const runtime = getUnifiRuntimeConfig();
+  return !!runtime.apiKey;
 }
 
 export function getWebhookUrl(): string {

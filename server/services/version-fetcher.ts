@@ -1,7 +1,6 @@
 import { getDb } from '../db';
 import { fetchSynologyVersion } from '../scrapers/synology';
 import { fetchSophosVersion } from '../scrapers/sophos';
-import { fetchUniFiVersion } from '../scrapers/unifi';
 import { fetchProxmoxVEVersion } from '../scrapers/proxmox-ve';
 import { fetchProxmoxBackupVersion } from '../scrapers/proxmox-backup';
 import { fetchTeamViewerVersion } from '../scrapers/teamviewer';
@@ -17,7 +16,6 @@ export interface VersionInfo {
 const scrapers: Record<string, () => Promise<{ version: string; url: string }>> = {
   'synology-dsm': fetchSynologyVersion,
   'sophos-firewall': fetchSophosVersion,
-  'unifi-network': fetchUniFiVersion,
   'proxmox-ve': fetchProxmoxVEVersion,
   'proxmox-backup': fetchProxmoxBackupVersion,
   'teamviewer': fetchTeamViewerVersion,
@@ -26,7 +24,8 @@ const scrapers: Record<string, () => Promise<{ version: string; url: string }>> 
 export const productNames: Record<string, string> = {
   'synology-dsm': 'Synology DSM',
   'sophos-firewall': 'Sophos Firewall',
-  'unifi-network': 'UniFi Network',
+  'unifi-os': 'UniFi OS',
+  'unifi-network': 'UniFi Network App',
   'proxmox-ve': 'Proxmox VE',
   'proxmox-backup': 'Proxmox Backup Server',
   'teamviewer': 'TeamViewer',
@@ -42,6 +41,27 @@ export function getProductName(id: string): string {
 }
 
 export async function fetchLatestVersion(product: string): Promise<VersionInfo> {
+  if (product === 'unifi-network' || product === 'unifi-os') {
+    const db = getDb();
+    const cached = db.prepare('SELECT * FROM version_cache WHERE product = ?').get(product) as any;
+    if (cached) {
+      return {
+        product,
+        latestVersion: cached.latest_version,
+        releaseUrl: cached.release_url,
+        checkedAt: cached.checked_at,
+      };
+    }
+
+    return {
+      product,
+      latestVersion: '',
+      releaseUrl: '',
+      checkedAt: new Date().toISOString(),
+      error: 'UniFi-Version wird über UniFi-Sync ermittelt',
+    };
+  }
+
   const scraper = scrapers[product];
   if (!scraper) {
     // Check if it's a custom product
@@ -152,7 +172,9 @@ export function getAllProducts(): string[] {
 
   // Active scraper products
   const activeScrapers = db.prepare('SELECT product FROM scraper_products WHERE active = 1').all() as { product: string }[];
-  const scraperIds = activeScrapers.map(r => r.product).filter(p => scrapers[p]);
+  const scraperIds = activeScrapers
+    .map(r => r.product)
+    .filter(p => scrapers[p] || p === 'unifi-network' || p === 'unifi-os');
 
   // Active custom products
   const activeCustom = db.prepare('SELECT id FROM custom_products WHERE active = 1').all() as { id: string }[];
