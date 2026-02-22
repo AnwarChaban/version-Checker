@@ -12,6 +12,7 @@ import { fetchAllLatestVersions } from './services/version-fetcher';
 import { getCustomers, syncNinjaOneData } from './services/ninjaone';
 import { compareVersions } from './services/comparator';
 import { sendNotifications, type UpdateNotification } from './services/notifier';
+import { getActiveConnectors, isNinjaOneConfigured } from './services/runtime-settings';
 
 const app = express();
 
@@ -64,25 +65,45 @@ async function runScheduledCheck() {
 cron.schedule(config.checkCron, runScheduledCheck);
 console.log(`[Scheduler] Cron scheduled: ${config.checkCron}`);
 
-if (config.useNinjaOne) {
-  cron.schedule(config.ninjaSyncCron, async () => {
-    console.log(`[Scheduler] Running NinjaOne sync at ${new Date().toISOString()}`);
-    try {
+cron.schedule(config.ninjaSyncCron, async () => {
+  const ninjaConnectors = getActiveConnectors().filter(c => c.type === 'ninjaone');
+  if (ninjaConnectors.length === 0 && !isNinjaOneConfigured()) {
+    return;
+  }
+
+  console.log(`[Scheduler] Running NinjaOne sync at ${new Date().toISOString()}`);
+  try {
+    if (ninjaConnectors.length > 0) {
+      for (const connector of ninjaConnectors) {
+        const result = await syncNinjaOneData(connector.id);
+        console.log(`[Scheduler] NinjaOne sync (${connector.name}) complete. ${result.customers} customer(s), ${result.devices} device entry/entries.`);
+      }
+    } else {
       const result = await syncNinjaOneData();
       console.log(`[Scheduler] NinjaOne sync complete. ${result.customers} customer(s), ${result.devices} device entry/entries.`);
-    } catch (error) {
-      console.error('[Scheduler] NinjaOne sync failed:', error);
     }
-  });
-  console.log(`[Scheduler] NinjaOne sync cron scheduled: ${config.ninjaSyncCron}`);
-}
+  } catch (error) {
+    console.error('[Scheduler] NinjaOne sync failed:', error);
+  }
+});
+console.log(`[Scheduler] NinjaOne sync cron scheduled: ${config.ninjaSyncCron}`);
 
 // Start server
 app.listen(config.port, () => {
   console.log(`[Server] Version Checker running on http://localhost:${config.port}`);
-  console.log(`[Server] NinjaOne: ${config.useNinjaOne ? 'API mode' : 'Mock mode (no API key)'}`);
+  console.log(`[Server] NinjaOne: runtime-config enabled`);
 
-  if (config.useNinjaOne) {
+  const ninjaConnectors = getActiveConnectors().filter(c => c.type === 'ninjaone');
+  if (ninjaConnectors.length > 0) {
+    console.log(`[Scheduler] Running initial NinjaOne sync for ${ninjaConnectors.length} connector(s)...`);
+    Promise.all(ninjaConnectors.map(async connector => {
+      try {
+        await syncNinjaOneData(connector.id);
+      } catch (error) {
+        console.error(`[Scheduler] Initial NinjaOne sync failed (${connector.name}):`, error);
+      }
+    })).catch(() => undefined);
+  } else if (isNinjaOneConfigured()) {
     console.log('[Scheduler] Running initial NinjaOne sync...');
     syncNinjaOneData().catch(error => {
       console.error('[Scheduler] Initial NinjaOne sync failed:', error);

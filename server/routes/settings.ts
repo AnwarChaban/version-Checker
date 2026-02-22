@@ -1,17 +1,34 @@
 import { Router } from 'express';
 import { getDb } from '../db';
-import { isUsingMockData } from '../services/ninjaone';
+import { config } from '../config';
+import { isNinjaOneConfigured } from '../services/runtime-settings';
 
 const router = Router();
 
 router.get('/settings', (_req, res) => {
   const db = getDb();
+  const settings: Record<string, string> = {
+    webhookUrl: config.webhookUrl || '',
+    slackWebhookUrl: config.slackWebhookUrl || '',
+    ninjaoneApiUrl: config.ninjaone.apiUrl || '',
+    ninjaoneApiKey: config.ninjaone.apiKey || '',
+    ninjaoneClientId: config.ninjaone.clientId || '',
+    ninjaoneClientSecret: config.ninjaone.clientSecret || '',
+    unifiApiUrl: '',
+    unifiApiKey: '',
+    unifiClientId: '',
+    unifiClientSecret: '',
+    sophosApiUrl: '',
+    sophosApiKey: '',
+    sophosClientId: '',
+    sophosClientSecret: '',
+  };
+
   const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
-  const settings: Record<string, string> = {};
   for (const row of rows) {
     settings[row.key] = row.value;
   }
-  settings.mockMode = isUsingMockData() ? 'true' : 'false';
+  settings.mockMode = isNinjaOneConfigured() ? 'false' : 'true';
   res.json(settings);
 });
 
