@@ -25,6 +25,7 @@ async function throwApiError(res: Response, fallbackMessage: string): Promise<ne
 export interface DeviceStatus {
   id: number;
   name: string;
+  groupLabel?: string;
   currentVersion: string;
   latestVersion?: string;
   status: 'up-to-date' | 'update-available' | 'major-update' | 'unknown';

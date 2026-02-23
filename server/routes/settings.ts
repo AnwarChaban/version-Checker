@@ -15,6 +15,7 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'sophosApiKey',
   'sophosClientId',
   'sophosClientSecret',
+  'showUpToDateDevices',
 ]);
 
 router.get('/settings', (_req, res) => {
@@ -29,6 +30,7 @@ router.get('/settings', (_req, res) => {
     sophosApiKey: '',
     sophosClientId: '',
     sophosClientSecret: '',
+    showUpToDateDevices: 'false',
   };
 
   const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;

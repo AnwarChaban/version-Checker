@@ -21,6 +21,7 @@ function Dashboard() {
   const [mockMode, setMockMode] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [showUpToDateDevices, setShowUpToDateDevices] = useState(false);
 
   async function loadProducts() {
     try {
@@ -39,6 +40,7 @@ function Dashboard() {
     try {
       const settings = await fetchSettings();
       setMockMode(settings.mockMode === 'false');
+      setShowUpToDateDevices(settings.showUpToDateDevices === 'true');
     } catch {
       // ignore
     }
@@ -53,15 +55,85 @@ function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  const totalDevices = products.reduce((sum, p) => sum + p.customers.reduce((s, c) => s + c.devices.length, 0), 0);
-  const updatesAvailable = products.reduce((sum, p) =>
+  function mergeUnifiProducts(inputProducts: ProductStatus[]): ProductStatus[] {
+    const unifiKeys = new Set(['unifi-os', 'unifi-network']);
+    const hasUnifi = inputProducts.some(product => unifiKeys.has(product.product));
+    if (!hasUnifi) return inputProducts;
+
+    const firstUnifiIndex = inputProducts.findIndex(product => unifiKeys.has(product.product));
+    const otherProducts = inputProducts.filter(product => !unifiKeys.has(product.product));
+
+    const unifiProductsOrdered = ['unifi-os', 'unifi-network']
+      .map(key => inputProducts.find(product => product.product === key))
+      .filter((product): product is ProductStatus => !!product);
+
+    const customerMap = new Map<number, ProductStatus['customers'][number]>();
+
+    unifiProductsOrdered.forEach(product => {
+      const groupLabel = product.product === 'unifi-os' ? 'UniFi OS' : 'Network App';
+      product.customers.forEach(customer => {
+        const existing = customerMap.get(customer.id) ?? {
+          id: customer.id,
+          name: customer.name,
+          devices: [],
+        };
+
+        existing.devices.push(
+          ...customer.devices.map(device => ({
+            ...device,
+            groupLabel,
+          }))
+        );
+
+        customerMap.set(customer.id, existing);
+      });
+    });
+
+    const mergedUnifi: ProductStatus = {
+      product: 'unifi',
+      productName: 'UniFi',
+      latestVersion: '',
+      releaseUrl: '',
+      checkedAt: new Date().toISOString(),
+      error: unifiProductsOrdered.map(product => product.error).filter(Boolean).join(' | ') || undefined,
+      customers: Array.from(customerMap.values()),
+    };
+
+    const result = [...otherProducts];
+    const insertAt = Math.max(0, Math.min(firstUnifiIndex, result.length));
+    result.splice(insertAt, 0, mergedUnifi);
+
+    return result;
+  }
+
+  const mergedProducts = mergeUnifiProducts(products);
+  const totalDevices = mergedProducts.reduce((sum, p) => sum + p.customers.reduce((s, c) => s + c.devices.length, 0), 0);
+  const updatesAvailable = mergedProducts.reduce((sum, p) =>
     sum + p.customers.reduce((s, c) =>
       s + c.devices.filter(d => d.status === 'update-available' || d.status === 'major-update').length, 0), 0);
-  const productsWithUpdates = products.filter(product =>
+  const productsWithUpdates = mergedProducts.filter(product =>
     product.customers.some(customer =>
       customer.devices.some(device => device.status === 'update-available' || device.status === 'major-update')
     )
   );
+  const sortedProducts = [...productsWithUpdates].sort((a, b) => {
+    const aOutdated = a.customers.reduce(
+      (sum, customer) => sum + customer.devices.filter(device => device.status === 'update-available' || device.status === 'major-update').length,
+      0
+    );
+    const bOutdated = b.customers.reduce(
+      (sum, customer) => sum + customer.devices.filter(device => device.status === 'update-available' || device.status === 'major-update').length,
+      0
+    );
+
+    if (bOutdated !== aOutdated) return bOutdated - aOutdated;
+
+    const aTotal = a.customers.reduce((sum, customer) => sum + customer.devices.length, 0);
+    const bTotal = b.customers.reduce((sum, customer) => sum + customer.devices.length, 0);
+    if (bTotal !== aTotal) return bTotal - aTotal;
+
+    return a.productName.localeCompare(b.productName, 'de');
+  });
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '32px 16px' }}>
@@ -78,18 +150,7 @@ function Dashboard() {
                   {updatesAvailable} Update(s) verfügbar
                 </span>
               )}
-              {mockMode && (
-                <span style={{
-                  marginLeft: '12px',
-                  padding: '2px 8px',
-                  backgroundColor: '#4c1d95',
-                  color: '#c4b5fd',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                }}>
-                  DEMO
-                </span>
-              )}
+             
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -129,13 +190,13 @@ function Dashboard() {
       ) : (
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))',
+          gridTemplateColumns: '1fr',
           gap: '16px',
         }}>
-          {productsWithUpdates.map(product => (
-            <ProductCard key={product.product} product={product} />
+          {sortedProducts.map(product => (
+            <ProductCard key={product.product} product={product} showUpToDateDevices={showUpToDateDevices} />
           ))}
-          {productsWithUpdates.length === 0 && (
+          {sortedProducts.length === 0 && (
             <p style={{ color: '#64748b', fontSize: '14px', gridColumn: '1 / -1' }}>
               Keine Updates erforderlich
             </p>

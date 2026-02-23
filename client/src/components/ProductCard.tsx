@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import type { ProductStatus } from '../api';
 import CustomerList from './CustomerList';
 
@@ -24,8 +24,13 @@ function getStatusLabel(product: ProductStatus): { label: string; bg: string; co
   return { label: 'Unbekannt', bg: '#374151', color: '#9ca3af' };
 }
 
-export default function ProductCard({ product }: { product: ProductStatus }) {
-  const [expanded, setExpanded] = useState(true);
+export default function ProductCard({
+  product,
+  showUpToDateDevices,
+}: {
+  product: ProductStatus;
+  showUpToDateDevices: boolean;
+}) {
   const borderColor = getOverallStatus(product);
   const status = getStatusLabel(product);
   const totalDevices = product.customers.reduce((sum, c) => sum + c.devices.length, 0);
@@ -39,10 +44,7 @@ export default function ProductCard({ product }: { product: ProductStatus }) {
         borderRadius: '12px',
         padding: '20px',
         borderLeft: `4px solid ${borderColor}`,
-        cursor: 'pointer',
-        transition: 'transform 0.1s, box-shadow 0.1s',
       }}
-      onClick={() => setExpanded(!expanded)}
     >
       <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#f1f5f9', margin: '0 0 10px 0' }}>
         {product.productName}
@@ -88,9 +90,9 @@ export default function ProductCard({ product }: { product: ProductStatus }) {
         <p style={{ fontSize: '12px', color: '#f87171', margin: '8px 0 0 0' }}>{product.error}</p>
       )}
 
-      {expanded && product.customers.length > 0 && (
+      {product.customers.length > 0 && (
         <div style={{ marginTop: '12px', borderTop: '1px solid #334155', paddingTop: '12px' }}>
-          <CustomerList customers={product.customers} />
+          <CustomerList customers={product.customers} showUpToDateDevices={showUpToDateDevices} />
         </div>
       )}
     </div>

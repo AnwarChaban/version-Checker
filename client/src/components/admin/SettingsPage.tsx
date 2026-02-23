@@ -34,6 +34,7 @@ export default function SettingsPage() {
   const [sophosApiKey, setSophosApiKey] = useState('');
   const [sophosClientId, setSophosClientId] = useState('');
   const [sophosClientSecret, setSophosClientSecret] = useState('');
+  const [showUpToDateDevices, setShowUpToDateDevices] = useState(false);
   const [saved, setSaved] = useState(false);
 
   async function load() {
@@ -47,6 +48,7 @@ export default function SettingsPage() {
     setSophosApiKey(s.sophosApiKey || '');
     setSophosClientId(s.sophosClientId || '');
     setSophosClientSecret(s.sophosClientSecret || '');
+    setShowUpToDateDevices(s.showUpToDateDevices === 'true');
   }
 
   useEffect(() => { load(); }, []);
@@ -62,6 +64,7 @@ export default function SettingsPage() {
       sophosApiKey,
       sophosClientId,
       sophosClientSecret,
+      showUpToDateDevices: showUpToDateDevices ? 'true' : 'false',
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -129,6 +132,16 @@ export default function SettingsPage() {
 
         <div style={cardStyle}>
           <h3 style={sectionTitleStyle}>Aktionen</h3>
+          <div style={{ display: 'grid', gap: '10px', marginBottom: '14px' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: '#cbd5e1', fontSize: '14px' }}>
+              <input
+                type="checkbox"
+                checked={showUpToDateDevices}
+                onChange={e => setShowUpToDateDevices(e.target.checked)}
+              />
+              Aktuelle Geräte im Dashboard anzeigen
+            </label>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button style={primaryBtn} onClick={handleSave}>Speichern</button>
             {saved && <span style={{ color: '#6ee7b7', fontSize: '13px' }}>Gespeichert!</span>}
